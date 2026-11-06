@@ -178,7 +178,7 @@ net.on('admitted', () => {
 net.on('unauthorized', (u) => {
   if (u.guest) {
     showGate(
-      '팀원 테스트용 붕어빌리지',
+      '붕어빌리지에 어서 오세요',
       '지금은 가슴속 3천원 로그인 없이 열려 있어요.<br>들어가서 사장님 이름을 정하면 시작해요.',
       `<form class="dev-login guest-login" id="guest-login">
         ${u.inviteRequired ? '<input id="invite-code" maxlength="20" placeholder="입장 코드" autocomplete="off">' : ''}
