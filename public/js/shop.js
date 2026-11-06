@@ -1,0 +1,476 @@
+import { net } from './net.js';
+import { MENU, priceOf, won, escapeHtml } from './data.js';
+import { portrait, presetPortrait, randomPerson } from './people.js';
+import { kettleSvg, containerSvg, npcOrderMessage, SELLER_REPLIES } from './art.js';
+import { GrillView, TrayView, FISH_IMG, MOLD_COUNT } from './stall-ui.js';
+
+const FILL_DELAY = 0.5;
+const SIDE1 = 3.5;
+const FLIP_WINDOW = 4.5;
+const SIDE2 = 3.5;
+const DONE_WINDOW = 7;
+const MAX_TRAY = 12;
+const MAX_WALKINS = 3;
+const NPC_TAGS = ['동네 손님', '학생 손님', '퇴근길 손님', '산책 손님', '단골 손님', '꼬마 손님'];
+
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+export class Shop {
+  constructor({ toast, onClose }) {
+    this.toast = toast;
+    this.onClose = onClose;
+    this.el = document.getElementById('shop');
+    this.customersEl = document.getElementById('customers');
+    this.emptyEl = document.getElementById('customers-empty');
+    this.hintEl = document.getElementById('grill-hint');
+    this.capitalEl = document.getElementById('shop-capital');
+    this.statsEl = document.getElementById('shop-stats');
+    this.nameEl = document.getElementById('shop-name');
+    this.active = false;
+    this.tool = 'batter';
+    this.molds = Array.from({ length: MOLD_COUNT }, () => ({ phase: 'empty', filling: null, d: 0, t: 0 }));
+    this.customers = [];
+    this.grill = new GrillView(document.getElementById('grill'), { onTap: (i) => this.tapMold(i) });
+    this.trayView = new TrayView(document.getElementById('tray'));
+
+    const tools = document.getElementById('tools');
+    tools.innerHTML = `
+      <button class="tool kettle" data-tool="batter" aria-label="반죽 주전자">${kettleSvg()}<span class="tool-name">반죽</span></button>
+      <button class="tool tub" data-tool="red" aria-label="팥 통">${containerSvg('red')}<span class="tool-name">팥</span></button>
+      <button class="tool tub" data-tool="cream" aria-label="슈크림 통">${containerSvg('cream')}<span class="tool-name">슈크림</span></button>`;
+    tools.querySelectorAll('.tool').forEach((btn) => btn.addEventListener('click', () => this.setTool(btn.dataset.tool)));
+    document.getElementById('shop-close').addEventListener('click', () => this.close());
+
+    net.on('order', (o) => this.onOrder(o));
+    net.on('player', (p) => {
+      if (this.active && p.id === net.me?.id) this.renderMoney();
+    });
+  }
+
+  open() {
+    const me = net.me;
+    this.active = true;
+    this.tray = { red: 0, cream: 0 };
+    this.stats = { sold: 0, revenue: 0 };
+    this.customers.forEach((c) => c.el.remove());
+    this.customers = [];
+    this.molds.forEach((m) => Object.assign(m, { phase: 'empty', filling: null, d: 0, t: 0 }));
+    this.nextSpawn = 1.2;
+    this.lastSync = '';
+    this.setTool('batter');
+    this.nameEl.textContent = me.stall?.name || `${me.nickname}네 붕어빵`;
+    this.el.classList.remove('hidden');
+    for (const o of net.orders.values()) {
+      if (o.sellerId === me.id && o.status === 'waiting') this.addUserCustomer(o);
+    }
+    this.emptyEl.classList.toggle('hidden', this.customers.length > 0);
+    this.renderGrill();
+    this.trayView.render(this.tray);
+    this.renderMoney();
+    this.renderStats();
+    this.last = performance.now();
+    clearInterval(this.loop);
+    this.loop = setInterval(() => {
+      const now = performance.now();
+      const dt = Math.min((now - this.last) / 1000, 0.25);
+      this.last = now;
+      this.update(dt);
+    }, 50);
+    clearInterval(this.syncLoop);
+    this.syncLoop = setInterval(() => this.syncGrill(), 500);
+  }
+
+  close() {
+    if (!this.active) return;
+    this.active = false;
+    clearInterval(this.loop);
+    clearInterval(this.syncLoop);
+    this.pourFx?.classList.remove('show');
+    this.el.classList.add('hidden');
+    this.onClose?.({ ...this.stats });
+  }
+
+  setTool(tool) {
+    this.tool = tool;
+    document.querySelectorAll('#tools .tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
+  }
+
+  tapMold(i) {
+    const m = this.molds[i];
+    const nudge = (msg) => {
+      this.grill.nudge(i);
+      if (msg) this.hint(msg, true);
+    };
+    switch (m.phase) {
+      case 'empty':
+        if (this.tool !== 'batter') return nudge('주전자로 반죽을 먼저 부어 주세요');
+        this.pourEffect(i, 'batter');
+        Object.assign(m, { phase: 'batter', d: 0, t: 0, hot: false });
+        if (this.molds.every((x) => x.phase !== 'empty')) this.setTool(this.lastFilling || 'red');
+        break;
+      case 'batter':
+        if (this.tool === 'batter') return nudge('팥이나 슈크림을 골라 넣어 주세요');
+        this.pourEffect(i, this.tool);
+        Object.assign(m, { phase: 'filled', filling: this.tool, t: 0, d: 0 });
+        this.lastFilling = this.tool;
+        break;
+      case 'filled':
+      case 'side1':
+      case 'side2':
+        return nudge('아직 굽는 중이에요');
+      case 'flip':
+        Object.assign(m, { phase: 'side2', t: 0, under: 0.95 + (m.t / FLIP_WINDOW) * 0.5 });
+        break;
+      case 'done': {
+        if (this.tray[m.filling] >= MAX_TRAY) return nudge('보관대가 가득 찼어요');
+        this.flyToTray(i, m.filling);
+        this.tray[m.filling]++;
+        this.trayView.render(this.tray, m.filling);
+        Object.assign(m, { phase: 'empty', filling: null, d: 0, t: 0, hot: false });
+        this.refreshReady();
+        if (this.molds.some((x) => x.phase === 'empty') && !this.molds.some((x) => x.phase === 'batter')) this.setTool('batter');
+        break;
+      }
+      case 'burnt':
+        Object.assign(m, { phase: 'empty', filling: null, d: 0, t: 0, hot: false });
+        this.toast('탄 붕어빵을 버렸어요');
+        break;
+      default:
+        break;
+    }
+    this.renderGrill();
+  }
+
+  update(dt) {
+    let burnt = false;
+    for (const m of this.molds) {
+      if (m.phase === 'empty' || m.phase === 'batter' || m.phase === 'burnt') continue;
+      m.t += dt;
+      if (m.phase === 'filled') {
+        if (m.t >= FILL_DELAY) Object.assign(m, { phase: 'side1', t: 0, d: 0 });
+      } else if (m.phase === 'side1') {
+        m.d = (m.t / SIDE1) * 0.35;
+        m.hot = false;
+        if (m.t >= SIDE1) Object.assign(m, { phase: 'flip', t: 0, d: 0.35 });
+      } else if (m.phase === 'flip') {
+        m.d = 0.35 + (m.t / FLIP_WINDOW) * 0.15;
+        m.hot = m.t > FLIP_WINDOW * 0.65;
+        if (m.t >= FLIP_WINDOW) {
+          Object.assign(m, { phase: 'burnt', d: 1.6, hot: false });
+          burnt = true;
+        }
+      } else if (m.phase === 'side2') {
+        m.d = m.under + Math.min(1, m.t / SIDE2) * 0.05;
+        m.hot = false;
+        if (m.t >= SIDE2) {
+          Object.assign(m, { phase: 'done', t: 0, top: m.d });
+          this.hint('짠! 다 익었어요. 탭해서 보관대로 옮기세요', true);
+        }
+      } else if (m.phase === 'done') {
+        m.d = m.top + (m.t / DONE_WINDOW) * (1.6 - m.top);
+        m.hot = m.d > 1.32;
+        if (m.t >= DONE_WINDOW) {
+          Object.assign(m, { phase: 'burnt', d: 1.6, hot: false });
+          burnt = true;
+        }
+      }
+    }
+    if (burnt) this.toast('앗, 붕어빵이 탔어요!');
+    this.renderGrill();
+
+    const walkins = this.customers.filter((c) => c.kind === 'npc').length;
+    if (this.customers.length < MAX_WALKINS && walkins < MAX_WALKINS) {
+      this.nextSpawn -= dt;
+      if (this.nextSpawn <= 0) {
+        this.addNpcCustomer();
+        this.nextSpawn = 2.5 + Math.random() * 4;
+      }
+    }
+
+    for (const c of [...this.customers]) {
+      if (c.kind !== 'npc' || c.leaving) continue;
+      c.patience -= dt;
+      const ratio = Math.max(0, c.patience / c.maxPatience);
+      c.barEl.style.transform = `scaleX(${ratio})`;
+      c.barWrap.classList.toggle('warn', ratio < 0.5 && ratio >= 0.25);
+      c.barWrap.classList.toggle('danger', ratio < 0.25);
+      c.el.classList.toggle('impatient', ratio < 0.25);
+      if (c.patience <= 0) {
+        this.toast(`${c.tag}이 기다리다 떠났어요`);
+        this.removeCustomer(c);
+      }
+    }
+    this.updateHint();
+  }
+
+  renderGrill() {
+    this.grill.render(this.molds);
+  }
+
+  syncGrill() {
+    const payload = {
+      molds: this.molds.map((m) => ({ p: m.phase, f: m.filling, d: Math.round(m.d * 100) / 100, h: !!m.hot })),
+      tray: this.tray,
+    };
+    const key = JSON.stringify(payload);
+    if (key === this.lastSync) return;
+    this.lastSync = key;
+    net.post('/api/grill', payload).catch(() => {});
+  }
+
+  pourEffect(i, tool) {
+    const r = this.grill.rect(i);
+    if (!this.pourFx) {
+      this.pourFx = document.createElement('div');
+      this.pourFx.className = 'pour-fx';
+      document.body.appendChild(this.pourFx);
+    }
+    const fx = this.pourFx;
+    if (fx.dataset.tool !== tool) {
+      fx.innerHTML = tool === 'batter' ? kettleSvg() : containerSvg(tool);
+      fx.dataset.tool = tool;
+    }
+    const pos = `translate(${r.left + r.width * 0.55}px, ${r.top - 30}px)`;
+    if (!fx.classList.contains('show')) {
+      fx.style.transition = 'none';
+      fx.style.transform = pos;
+      void fx.offsetWidth;
+      fx.style.transition = '';
+    } else {
+      fx.style.transform = pos;
+    }
+    fx.classList.add('show');
+    const art = fx.firstElementChild;
+    art.getAnimations().forEach((a) => a.cancel());
+    art.animate(
+      tool === 'batter'
+        ? [{ transform: 'rotate(0)' }, { transform: 'rotate(-38deg)' }, { transform: 'rotate(-8deg)' }]
+        : [{ transform: 'translateY(-6px)' }, { transform: 'translateY(5px) rotate(-10deg)' }, { transform: 'translateY(0)' }],
+      { duration: 380, easing: 'ease-in-out' },
+    );
+    clearTimeout(this.pourHide);
+    this.pourHide = setTimeout(() => fx.classList.remove('show'), 600);
+  }
+
+  flyToTray(i, kind) {
+    const from = this.grill.rect(i);
+    const to = this.trayView.rect(kind);
+    const fly = document.createElement('img');
+    fly.src = FISH_IMG;
+    fly.className = 'fly-fish';
+    fly.style.left = `${from.left + from.width / 2 - 24}px`;
+    fly.style.top = `${from.top + from.height / 2 - 16}px`;
+    document.body.appendChild(fly);
+    requestAnimationFrame(() => {
+      fly.style.transform = `translate(${to.left + to.width / 2 - (from.left + from.width / 2)}px, ${to.top + to.height / 2 - (from.top + from.height / 2)}px) scale(.7)`;
+      fly.style.opacity = '0.2';
+    });
+    setTimeout(() => fly.remove(), 450);
+  }
+
+  hint(text, urgent = false) {
+    this.hintEl.textContent = text;
+    this.hintHoldUntil = urgent ? performance.now() + 1500 : 0;
+  }
+
+  updateHint() {
+    if (this.hintHoldUntil && performance.now() < this.hintHoldUntil) return;
+    const phases = this.molds.map((m) => m.phase);
+    let text;
+    if (phases.includes('flip')) text = '아랫면이 익었어요! 빨리 뒤집을수록 황금빛이에요';
+    else if (phases.includes('done')) text = '다 익었어요! 탭해서 보관대로 옮기기';
+    else if (phases.includes('burnt')) text = '탄 붕어빵은 탭해서 버려요';
+    else if (phases.includes('batter')) text = '팥·슈크림 통을 골라 반죽 위를 탭하세요';
+    else if (this.tray.red + this.tray.cream > 0 && this.customers.length) text = '손님을 탭해서 붕어빵을 건네세요';
+    else if (phases.every((p) => p === 'empty')) text = '주전자를 골라 빈 틀을 탭해 반죽을 부어요';
+    else text = '굽는 중… 노릇해지면 뒤집어요';
+    if (this.hintEl.textContent !== text) this.hintEl.textContent = text;
+  }
+
+  addNpcCustomer() {
+    const r = Math.random();
+    const count = r < 0.3 ? 1 : r < 0.6 ? 2 : r < 0.92 ? 3 : 4;
+    let red = 0;
+    let cream = 0;
+    const mostlyOne = Math.random() < 0.5 ? 'red' : 'cream';
+    for (let i = 0; i < count; i++) {
+      if (Math.random() < 0.7 ? mostlyOne === 'red' : mostlyOne !== 'red') red++;
+      else cream++;
+    }
+    const maxPatience = 26 + Math.random() * 14;
+    this.addCustomer({
+      kind: 'npc',
+      tag: pick(NPC_TAGS),
+      face: portrait(randomPerson(Math.floor(Math.random() * 400)), { size: 180 }),
+      message: npcOrderMessage(red, cream),
+      red,
+      cream,
+      price: priceOf(count),
+      patience: maxPatience,
+      maxPatience,
+    });
+  }
+
+  addUserCustomer(order) {
+    if (this.customers.some((c) => c.orderId === order.id)) return;
+    const c = this.addCustomer({
+      kind: 'user',
+      tag: `${order.buyerName} 사장님`,
+      name: order.buyerName,
+      face: presetPortrait(order.buyerCharacter, { size: 180 }),
+      message: order.note || '붕어빵 주세요!',
+      red: order.red,
+      cream: order.cream,
+      price: order.price,
+      orderId: order.id,
+    });
+    this.updateUserMessages(c, order);
+  }
+
+  addCustomer(c) {
+    const el = document.createElement('div');
+    el.className = `customer ${c.kind}`;
+    const chips = [];
+    if (c.red) chips.push(`<span class="chip-item"><img src="${FISH_IMG}" alt=""><i class="filling red"></i>팥 ×${c.red}</span>`);
+    if (c.cream) chips.push(`<span class="chip-item"><img src="${FISH_IMG}" alt=""><i class="filling cream"></i>슈크림 ×${c.cream}</span>`);
+    el.innerHTML = `
+      <button class="order-bubble">
+        <p class="order-msg">"${escapeHtml(c.message)}"</p>
+        <div class="order-items">${chips.join('')}</div>
+        <div class="order-foot"><span class="ready-badge"></span><span class="order-price">${won(c.price)}</span></div>
+        <div class="patience"><i></i></div>
+      </button>
+      <img class="customer-face" src="${c.face}" alt="">
+      <span class="customer-tag">${escapeHtml(c.tag)}</span>
+      ${c.kind === 'user' ? `<div class="reply-chips">${SELLER_REPLIES.slice(0, 2).map((t) => `<button data-reply="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('')}</div>` : ''}`;
+    el.querySelector('.order-bubble').addEventListener('click', () => this.serve(c));
+    el.querySelector('.customer-face').addEventListener('click', () => this.serve(c));
+    el.querySelectorAll('[data-reply]').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      net.post('/api/order/message', { orderId: c.orderId, text: b.dataset.reply }).then(() => this.toast('답장을 보냈어요')).catch((err) => this.toast(err.message));
+    }));
+    c.el = el;
+    c.msgEl = el.querySelector('.order-msg');
+    c.barWrap = el.querySelector('.patience');
+    c.barEl = el.querySelector('.patience i');
+    c.readyEl = el.querySelector('.ready-badge');
+    this.customersEl.appendChild(el);
+    this.customers.push(c);
+    this.refreshReady();
+    this.emptyEl.classList.add('hidden');
+    if (c.kind === 'user') this.toast(`${c.name} 사장님이 주문했어요!`, 'pink');
+    return c;
+  }
+
+  updateUserMessages(c, order) {
+    const fromBuyer = (order.messages || []).filter((m) => m.from === 'buyer');
+    const latest = fromBuyer[fromBuyer.length - 1];
+    if (latest && latest.at !== c.lastMsgAt) {
+      if (c.lastMsgAt) this.toast(`${c.name}: ${latest.text}`, 'pink');
+      c.lastMsgAt = latest.at;
+      c.msgEl.innerHTML = `<span class="new-msg">💬</span> "${escapeHtml(latest.text)}"`;
+      c.el.classList.remove('ping');
+      void c.el.offsetWidth;
+      c.el.classList.add('ping');
+    }
+  }
+
+  refreshReady() {
+    for (const c of this.customers) {
+      if (!c.readyEl || c.serving) continue;
+      const lackRed = Math.max(0, c.red - this.tray.red);
+      const lackCream = Math.max(0, c.cream - this.tray.cream);
+      const ready = !lackRed && !lackCream;
+      c.el.classList.toggle('ready', ready);
+      c.readyEl.className = `ready-badge ${ready ? 'ok' : 'lack'}`;
+      c.readyEl.textContent = ready
+        ? '✓ 전달 가능'
+        : `${[lackRed ? `팥 ${lackRed}` : '', lackCream ? `슈 ${lackCream}` : ''].filter(Boolean).join('·')} 부족`;
+    }
+  }
+
+  removeCustomer(c) {
+    c.leaving = true;
+    this.customers = this.customers.filter((x) => x !== c);
+    c.el.classList.add('leaving');
+    setTimeout(() => c.el.remove(), 450);
+    if (!this.customers.length) this.emptyEl.classList.remove('hidden');
+  }
+
+  async serve(c) {
+    if (c.leaving || c.serving) return;
+    const missing = [];
+    if (this.tray.red < c.red) missing.push(`팥 ${c.red - this.tray.red}마리`);
+    if (this.tray.cream < c.cream) missing.push(`슈크림 ${c.cream - this.tray.cream}마리`);
+    if (missing.length) {
+      c.el.classList.remove('shake');
+      void c.el.offsetWidth;
+      c.el.classList.add('shake');
+      this.hint(`${missing.join(', ')}가 더 필요해요`, true);
+      return;
+    }
+    c.serving = true;
+    this.tray.red -= c.red;
+    this.tray.cream -= c.cream;
+    this.trayView.render(this.tray);
+    c.el.classList.remove('ready');
+    c.readyEl.className = 'ready-badge ok';
+    c.readyEl.textContent = '전달 완료!';
+    this.refreshReady();
+    const rect = c.el.getBoundingClientRect();
+    try {
+      if (c.kind === 'npc') await net.post('/api/sale', { red: c.red, cream: c.cream });
+      else await net.post('/api/order/fulfill', { orderId: c.orderId });
+      this.stats.sold += c.red + c.cream;
+      this.stats.revenue += c.price;
+      this.renderStats();
+      this.moneyPop(rect, `+${won(c.price)}`);
+      c.msgEl.textContent = pick(['"감사합니다~"', '"잘 먹을게요!"', '"와 따끈하다!"']);
+      setTimeout(() => this.removeCustomer(c), 350);
+    } catch (e) {
+      this.tray.red += c.red;
+      this.tray.cream += c.cream;
+      this.trayView.render(this.tray);
+      c.serving = false;
+      this.refreshReady();
+      this.toast(e.message);
+    }
+  }
+
+  onOrder(o) {
+    if (!this.active || o.sellerId !== net.me?.id) return;
+    const c = this.customers.find((x) => x.orderId === o.id);
+    if (o.status === 'waiting') {
+      if (c) this.updateUserMessages(c, o);
+      else this.addUserCustomer(o);
+      return;
+    }
+    if (c && o.status === 'cancelled' && !c.serving) {
+      this.toast(o.reason === 'timeout' ? `${c.name}님 주문이 시간 초과로 취소됐어요` : `${c.name}님이 주문을 취소했어요`);
+      this.removeCustomer(c);
+    }
+  }
+
+  moneyPop(rect, text) {
+    const pop = document.createElement('div');
+    pop.className = 'money-pop';
+    pop.textContent = text;
+    pop.style.left = `${rect.left + rect.width / 2 - 30}px`;
+    pop.style.top = `${rect.top + 10}px`;
+    document.body.appendChild(pop);
+    setTimeout(() => pop.remove(), 1000);
+    this.capitalEl.classList.remove('bump');
+    void this.capitalEl.offsetWidth;
+    this.capitalEl.classList.add('bump');
+  }
+
+  renderMoney() {
+    this.capitalEl.textContent = won(net.me?.capital);
+  }
+
+  renderStats() {
+    this.statsEl.textContent = `이번 장사 ${this.stats.sold}마리 · ${won(this.stats.revenue)}`;
+  }
+}
+
+export { MENU };

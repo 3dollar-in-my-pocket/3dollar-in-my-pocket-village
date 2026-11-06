@@ -1,0 +1,55 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "boong-village",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/", "/index.html", "/ws", "/dev-login", "/guest-login"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "VILLAGE", "class_name": "Village" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Village"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "boong-village",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "THREEDOLLARS_API": "https://dev.threedollars.co.kr",
+    "VILLAGE_CAPACITY": "50",
+    "BOTS": "1",
+    "AUTH_MODE": "guest",
+    "DEV_AUTH": "1"
+  },
+  "env": {
+    "production": {
+      "name": "boong-village",
+      "vars": {
+        "THREEDOLLARS_API": "https://threedollars.co.kr",
+        "VILLAGE_CAPACITY": "50",
+        "BOTS": "1",
+        "AUTH_MODE": "guest",
+        "DEV_AUTH": "0"
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "VILLAGE", "class_name": "Village" }]
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "boong-village",
+          "database_id": "3a55a823-a790-4c20-8c0a-42d9c2f833d8",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}

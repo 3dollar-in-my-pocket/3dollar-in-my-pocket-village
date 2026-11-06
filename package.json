@@ -1,0 +1,16 @@
+{
+  "name": "boong-village",
+  "version": "0.1.0",
+  "private": true,
+  "description": "가슴속 3천원 붕어빌리지 - 멀티플레이 붕어빵 장사 게임",
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8787",
+    "db:migrate:local": "wrangler d1 migrations apply boong-village --local",
+    "db:migrate:prod": "wrangler d1 migrations apply boong-village --remote --env production",
+    "deploy": "wrangler deploy --env production",
+    "reset:local": "rm -rf .wrangler/state && npm run db:migrate:local"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}

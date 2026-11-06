@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#FFEBD9">
+  <title>가슴속 3천원 붕어빌리지</title>
+  <link rel="icon" href="assets/appicon.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="world"></canvas>
+  <div id="labels"></div>
+
+  <section id="gate" class="screen gate">
+    <div class="entry-card gate-card">
+      <img class="gate-logo" src="assets/splash.png" alt="">
+      <p class="entry-brand">가슴속 3천원 붕어빌리지</p>
+      <h2 id="gate-title">마을에 들어가는 중…</h2>
+      <p id="gate-desc" class="entry-desc">잠시만 기다려 주세요</p>
+      <div id="gate-extra"></div>
+    </div>
+  </section>
+
+  <section id="entry" class="screen hidden">
+    <div class="entry-card">
+      <div class="entry-icons">
+        <img src="assets/cat/gyeranppang.svg" alt=""><img src="assets/cat/takoyaki.svg" alt="">
+        <img class="hero" src="assets/splash.png" alt="">
+        <img src="assets/cat/bread.svg" alt=""><img src="assets/cat/tanghulu.svg" alt="">
+      </div>
+      <p class="entry-brand">가슴속 3천원</p>
+      <h1>붕어빌리지</h1>
+      <p class="entry-desc">원하는 자리에 노점을 차리고 붕어빵을 구워 팔아요.<br>제일 많이 번 사장님은 누구일까요?</p>
+      <div class="entry-live"><span class="dot"></span><span id="entry-live-text">마을 불 켜는 중…</span></div>
+
+      <label class="field-label" for="nickname">사장님 이름</label>
+      <input id="nickname" maxlength="10" placeholder="붕어빵장인" autocomplete="off">
+      <p class="field-hint">10자까지 · 가입 필요 없어요</p>
+
+      <p class="field-label">캐릭터 고르기</p>
+      <div id="characters" class="characters"></div>
+
+      <button id="start" class="btn primary big">장사하러 가기</button>
+      <p id="entry-error" class="error"></p>
+    </div>
+  </section>
+
+  <section id="hud" class="hidden">
+    <header class="hud-top">
+      <div class="hud-brand"><img src="assets/cat/bungeoppang-tight.svg" alt=""><span>붕어빌리지</span></div>
+      <div class="hud-live"><span class="dot"></span><span id="live-count">0명</span></div>
+      <div class="hud-money"><span class="label">내 자본</span><strong id="my-capital">0원</strong></div>
+    </header>
+    <div id="place-banner" class="banner hidden">
+      <p id="place-text">가게를 차릴 자리를 탭하세요</p>
+      <div class="banner-actions">
+        <button id="place-cancel" class="btn ghost">취소</button>
+        <button id="place-confirm" class="btn primary" disabled>여기에 차리기</button>
+      </div>
+    </div>
+    <nav class="hud-bottom">
+      <button id="btn-rank" class="btn round" aria-label="랭킹">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>
+        <span>랭킹</span>
+      </button>
+      <button id="btn-main" class="btn primary main-action">가게 차리기</button>
+      <button id="btn-move" class="btn round hidden" aria-label="가게 옮기기">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+        <span>옮기기</span>
+      </button>
+    </nav>
+    <p class="hud-tip" id="hud-tip">빈 땅을 탭하면 걸어가요 · 노점을 탭하면 주문하러 가요</p>
+  </section>
+
+  <section id="shop" class="screen hidden">
+    <header class="shop-top">
+      <button id="shop-close" class="btn ghost small">장사 마치기</button>
+      <div class="shop-title">
+        <strong id="shop-name">내 붕어빵</strong>
+        <span id="shop-stats">이번 장사 0마리 · 0원</span>
+      </div>
+      <div class="shop-money" id="shop-capital">0원</div>
+    </header>
+
+    <div class="street">
+      <div id="customers" class="customers"></div>
+      <p id="customers-empty" class="customers-empty">손님 기다리는 중…</p>
+    </div>
+
+    <div class="counter">
+      <div class="counter-top"></div>
+      <div id="tray"></div>
+      <div id="grill"></div>
+      <div id="tools" class="tools"></div>
+      <p id="grill-hint" class="grill-hint"></p>
+    </div>
+  </section>
+
+  <section id="visit" class="screen hidden">
+    <header class="shop-top">
+      <button id="visit-close" class="btn ghost small">나가기</button>
+      <div class="shop-title">
+        <strong id="visit-name">붕어빵</strong>
+        <span id="visit-sub"></span>
+      </div>
+      <div class="shop-money" id="visit-capital">0원</div>
+    </header>
+    <div class="visit-scene">
+      <div class="awning"></div>
+      <div class="wall-signs">
+        <p class="wall-sign"><b>팥 · 슈크림</b>1마리 1,000원</p>
+        <p class="wall-sign"><b>3마리</b>2,000원 ♡</p>
+      </div>
+      <div class="owner-area">
+        <p id="owner-bubble" class="owner-bubble">어서 오세요!</p>
+        <img id="owner-face" class="owner-face" alt="">
+      </div>
+      <div id="visit-shutter" class="shutter hidden"><span>준비 중</span></div>
+    </div>
+    <div class="counter front">
+      <div class="counter-top"></div>
+      <div id="visit-grill"></div>
+      <div id="visit-tray"></div>
+    </div>
+    <div class="me-row">
+      <img id="me-back" class="me-back" alt="">
+      <p id="me-bubble" class="me-bubble hidden"></p>
+    </div>
+    <div id="visit-panel" class="visit-panel"></div>
+  </section>
+
+  <div id="sheet-backdrop" class="sheet-backdrop hidden"></div>
+  <section id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-handle"></div>
+    <div id="sheet-body"></div>
+  </section>
+
+  <div id="toasts" class="toasts"></div>
+
+  <script type="module" src="js/main.js"></script>
+  <script>
+    if (location.hostname === 'boong-village.3dollarinmypocket.workers.dev') {
+      const cfBeacon = document.createElement('script');
+      cfBeacon.defer = true;
+      cfBeacon.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+      cfBeacon.setAttribute('data-cf-beacon', '{"token": "a926ebdfc3684886a9b8fb52ac38b785"}');
+      document.body.appendChild(cfBeacon);
+    }
+  </script>
+</body>
+</html>
