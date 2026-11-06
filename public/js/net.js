@@ -27,6 +27,7 @@ class Net {
     this.ws = null;
     this.stopped = false;
     this.options = {};
+    this.features = {};
   }
 
   on(type, fn) {
@@ -120,6 +121,7 @@ class Net {
       }
       case 'hello':
         this.uid = msg.uid;
+        this.features = msg.features || {};
         if (msg.me) this.me = msg.me;
         this.emit('hello', msg);
         return;

@@ -13,6 +13,12 @@ const MAX_TRAY = 12;
 const MAX_WALKINS = 3;
 const NPC_TAGS = ['동네 손님', '학생 손님', '퇴근길 손님', '산책 손님', '단골 손님', '꼬마 손님'];
 
+function restartAnim(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 export class Shop {
@@ -42,6 +48,9 @@ export class Shop {
     document.getElementById('shop-close').addEventListener('click', () => this.close());
 
     net.on('order', (o) => this.onOrder(o));
+    this.thumbsToastAt = new Map();
+    this.thumbVisitors = new Map();
+    net.on('thumbs', (m) => this.onThumbs(m));
     net.on('player', (p) => {
       if (this.active && p.id === net.me?.id) this.renderMoney();
     });
@@ -54,6 +63,7 @@ export class Shop {
     this.stats = { sold: 0, revenue: 0 };
     this.customers.forEach((c) => c.el.remove());
     this.customers = [];
+    [...this.thumbVisitors.keys()].forEach((id) => this.removeThumbsVisitor(id, true));
     this.molds.forEach((m) => Object.assign(m, { phase: 'empty', filling: null, d: 0, t: 0 }));
     this.nextSpawn = 1.2;
     this.lastSync = '';
@@ -313,6 +323,7 @@ export class Shop {
 
   addUserCustomer(order) {
     if (this.customers.some((c) => c.orderId === order.id)) return;
+    this.removeThumbsVisitor(order.buyerId, true);
     const c = this.addCustomer({
       kind: 'user',
       tag: `${order.buyerName} 사장님`,
@@ -323,8 +334,100 @@ export class Shop {
       cream: order.cream,
       price: order.price,
       orderId: order.id,
+      buyerId: order.buyerId,
+      character: order.buyerCharacter,
     });
     this.updateUserMessages(c, order);
+  }
+
+  onThumbs({ fromId, fromName, fromCharacter, count }) {
+    const n = Math.max(1, Math.min(20, count | 0));
+    const now = Date.now();
+    if (now - (this.thumbsToastAt.get(fromId) || 0) > 4000) {
+      this.thumbsToastAt.set(fromId, now);
+      this.toast(`${fromName}님이 따봉을 보냈어요 👍`, 'pink');
+    }
+    if (!this.active) return;
+
+    // 주문한 손님이면 그 손님이, 아니면 잠깐 길가에 나타나서 따봉 포즈
+    const customer = this.customers.find((c) => c.buyerId === fromId && !c.leaving);
+    const actor = customer
+      ? { el: customer.el, face: customer.el.querySelector('.customer-face'), normal: customer.face, character: customer.character }
+      : this.thumbsVisitor(fromId, fromName, fromCharacter);
+    if (!actor?.face) return;
+    this.revealCustomer(actor.el);
+    const posed = presetPortrait(actor.character || fromCharacter, { size: 180, pose: 'thumbs' });
+
+    // 서버에는 0.4초 단위로 묶여 오므로 같은 간격 안에 나눠서 연타처럼 재생
+    const beats = Math.min(n, 8);
+    for (let i = 0; i < beats; i++) {
+      setTimeout(() => {
+        if (!actor.face.isConnected) return;
+        actor.face.src = posed;
+        actor.face.classList.add('posed');
+        restartAnim(actor.face, 'thumbs-hop');
+        this.thumbPop(actor.face);
+      }, (i * 400) / beats);
+    }
+    clearTimeout(actor.revertTimer);
+    actor.revertTimer = setTimeout(() => {
+      if (actor.visitor) return this.removeThumbsVisitor(fromId);
+      actor.face.src = actor.normal;
+      actor.face.classList.remove('posed', 'thumbs-hop');
+    }, actor.visitor ? 2400 : 1100);
+  }
+
+  thumbsVisitor(id, name, character) {
+    let v = this.thumbVisitors.get(id);
+    if (v) return v;
+    const el = document.createElement('div');
+    el.className = 'customer user thumb-visitor';
+    el.innerHTML = `
+      <p class="visitor-bubble">👍 따봉!</p>
+      <img class="customer-face" alt="">
+      <span class="customer-tag">${escapeHtml(name)} 사장님</span>`;
+    const face = el.querySelector('.customer-face');
+    face.src = presetPortrait(character, { size: 180 });
+    this.customersEl.prepend(el);
+    this.emptyEl.classList.add('hidden');
+    v = { el, face, normal: face.src, character, visitor: true };
+    this.thumbVisitors.set(id, v);
+    return v;
+  }
+
+  removeThumbsVisitor(id, instant = false) {
+    const v = this.thumbVisitors.get(id);
+    if (!v) return;
+    this.thumbVisitors.delete(id);
+    clearTimeout(v.revertTimer);
+    if (instant) v.el.remove();
+    else {
+      v.el.classList.add('leaving');
+      setTimeout(() => v.el.remove(), 450);
+    }
+    if (!this.customers.length && !this.thumbVisitors.size) this.emptyEl.classList.remove('hidden');
+  }
+
+  // 손님 줄이 가로로 넘치면 따봉 보낸 손님이 보이도록 스크롤
+  revealCustomer(el) {
+    const row = this.customersEl;
+    const left = el.offsetLeft;
+    const right = left + el.offsetWidth;
+    if (left >= row.scrollLeft && right <= row.scrollLeft + row.clientWidth) return;
+    row.scrollTo({ left: Math.max(0, left - (row.clientWidth - el.offsetWidth) / 2), behavior: 'smooth' });
+  }
+
+  thumbPop(anchor) {
+    const host = this.el.getBoundingClientRect();
+    const src = anchor.getBoundingClientRect();
+    const el = document.createElement('span');
+    el.className = 'thumb-pop';
+    el.textContent = Math.random() < 0.15 ? '❤️' : '👍';
+    el.style.left = `${src.left - host.left + src.width * (0.55 + Math.random() * 0.35)}px`;
+    el.style.top = `${src.top - host.top + src.height * 0.15}px`;
+    el.style.setProperty('--dx', `${(Math.random() - 0.5) * 60}px`);
+    el.addEventListener('animationend', () => el.remove());
+    this.el.appendChild(el);
   }
 
   addCustomer(c) {
@@ -394,7 +497,7 @@ export class Shop {
     this.customers = this.customers.filter((x) => x !== c);
     c.el.classList.add('leaving');
     setTimeout(() => c.el.remove(), 450);
-    if (!this.customers.length) this.emptyEl.classList.remove('hidden');
+    if (!this.customers.length && !this.thumbVisitors.size) this.emptyEl.classList.remove('hidden');
   }
 
   async serve(c) {
