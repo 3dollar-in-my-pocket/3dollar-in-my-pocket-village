@@ -11,6 +11,9 @@ const MAX_PER_ORDER = 9;
 const MAX_PER_SALE = 6;
 const MAX_VIEWERS = 30;
 const RANKING_SIZE = 50;
+const MAX_MESSAGE_BYTES = 4096;
+const MSG_BURST = 40;
+const MSG_PER_SEC = 15;
 
 const CHARACTERS = ['beanie', 'bucket', 'apron', 'curly', 'cap', 'earmuff'];
 const PHASES = new Set(['empty', 'batter', 'filled', 'side1', 'flip', 'side2', 'done', 'burnt']);
@@ -42,6 +45,8 @@ export class Village extends DurableObject {
     this.online = new Set();
     this.lastAction = new Map();
     this.rateMarks = new Map();
+    this.rateWindows = new Map();
+    this.buckets = new Map();
     this.lastFlush = Date.now();
     this.lastStats = 0;
     this.rankingDirty = true;
@@ -174,6 +179,34 @@ export class Village extends DurableObject {
       ids.forEach((id) => this.dirty.add(id));
       console.error('flush failed', e);
     }
+  }
+
+  allowRate(key, limit, windowMs) {
+    const now = Date.now();
+    const hits = (this.rateWindows.get(key) || []).filter((t) => now - t < windowMs);
+    if (hits.length >= limit) {
+      this.rateWindows.set(key, hits);
+      return false;
+    }
+    hits.push(now);
+    this.rateWindows.set(key, hits);
+    if (this.rateWindows.size > 5000) {
+      for (const [k, v] of this.rateWindows) {
+        if (!v.length || now - v[v.length - 1] > 10 * 60 * 1000) this.rateWindows.delete(k);
+      }
+    }
+    return true;
+  }
+
+  takeMessageToken(uid) {
+    const now = Date.now();
+    const b = this.buckets.get(uid) || { tokens: MSG_BURST, at: now };
+    b.tokens = Math.min(MSG_BURST, b.tokens + ((now - b.at) / 1000) * MSG_PER_SEC);
+    b.at = now;
+    this.buckets.set(uid, b);
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
   }
 
   /* ---------- sockets ---------- */
@@ -398,7 +431,13 @@ export class Village extends DurableObject {
   async webSocketMessage(ws, raw) {
     this.ensureTicking();
     const a = this.att(ws);
-    if (a.role !== 'player' || a.state !== 'active') return;
+    if (a.role !== 'player' || a.left) return;
+    const size = typeof raw === 'string' ? raw.length : raw.byteLength;
+    if (size > MAX_MESSAGE_BYTES || !this.takeMessageToken(a.uid)) {
+      this.kick(ws, 'flood', 4005);
+      return;
+    }
+    if (a.state !== 'active') return;
     let msg;
     try {
       msg = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw));

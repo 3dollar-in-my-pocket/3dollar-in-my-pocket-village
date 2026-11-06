@@ -4,6 +4,7 @@ const dec = new TextDecoder();
 export const SESSION_COOKIE = 'bv_session';
 const SESSION_TTL_SEC = 12 * 60 * 60;
 export const GUEST_TTL_SEC = 30 * 24 * 60 * 60;
+export const ACCOUNT_TTL_SEC = 30 * 24 * 60 * 60;
 
 function toB64url(bytes) {
   let bin = '';
@@ -88,4 +89,35 @@ export async function rememberAppUser(env, user) {
      VALUES (?1, ?2, ?3, ?4, ?4)
      ON CONFLICT(user_id) DO UPDATE SET app_name = excluded.app_name, social_type = excluded.social_type, last_seen_at = excluded.last_seen_at`,
   ).bind(user.uid, user.name, user.social, now).run();
+}
+
+export async function linkAccount(env, user, current) {
+  const now = Date.now();
+  const find = () => env.DB.prepare('SELECT player_key FROM accounts WHERE threedollars_user_id = ?1').bind(user.uid).first();
+  let row = await find();
+  if (!row) {
+    let playerKey = null;
+    let fromGuest = 0;
+    const guestUid = current?.uid?.startsWith('guest:') ? current.uid : null;
+    if (guestUid) {
+      const taken = await env.DB.prepare('SELECT 1 AS taken FROM accounts WHERE player_key = ?1').bind(guestUid).first();
+      if (!taken) {
+        playerKey = guestUid;
+        fromGuest = 1;
+      }
+    }
+    playerKey ||= `p:${crypto.randomUUID()}`;
+    await env.DB.prepare(
+      `INSERT INTO accounts (threedollars_user_id, player_key, app_name, social_type, linked_from_guest, first_seen_at, last_seen_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+       ON CONFLICT(threedollars_user_id) DO NOTHING`,
+    ).bind(user.uid, playerKey, user.name, user.social, fromGuest, now).run();
+    row = await find();
+  } else {
+    await env.DB.prepare('UPDATE accounts SET app_name = ?2, social_type = ?3, last_seen_at = ?4 WHERE threedollars_user_id = ?1')
+      .bind(user.uid, user.name, user.social, now).run();
+  }
+  const session = { uid: row.player_key, name: user.name, social: user.social };
+  await rememberAppUser(env, session);
+  return session;
 }

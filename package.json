@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8787",
     "db:migrate:local": "wrangler d1 migrations apply boong-village --local",
+    "db:migrate:dev": "wrangler d1 migrations apply boong-village-dev --remote --env dev",
     "db:migrate:prod": "wrangler d1 migrations apply boong-village --remote --env production",
-    "deploy": "wrangler deploy --env production",
+    "deploy:dev": "wrangler deploy --env dev",
+    "deploy:prod": "wrangler deploy --env production",
     "reset:local": "rm -rf .wrangler/state && npm run db:migrate:local"
   },
   "devDependencies": {

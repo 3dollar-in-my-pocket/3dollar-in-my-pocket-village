@@ -27,54 +27,74 @@ Cloudflare Workers + Durable Objects(실시간 마을) + D1(유저·게임 데�
 | `migrations/` | D1 스키마 |
 | `public/` | 게임 클라이언트(정적 파일) |
 
-## 로컬 실행
+## 환경
+
+| 환경 | 주소 | 3천원 API | NPC | D1 |
+|---|---|---|---|---|
+| local | http://localhost:8787 (`npm run dev`) | dev | 있음 | 로컬 |
+| dev | https://boong-village-dev.3dollarinmypocket.workers.dev | dev | 있음 | `boong-village-dev` |
+| production | https://boong-village.3dollarinmypocket.workers.dev | 운영 | 없음 | `boong-village` |
 
 ```bash
 npm install
-npm run db:migrate:local
-npm run dev            # http://localhost:8787
+npm run db:migrate:local && npm run dev     # 로컬
+npm run db:migrate:dev && npm run deploy:dev   # dev 배포
+npm run db:migrate:prod && npm run deploy:prod # production 배포
 ```
 
-- 로컬은 `DEV_AUTH=1`이라 토큰 없이 열면 **개발용 입장** 폼이 뜹니다 (`/dev-login?name=이름`)
-- 여러 유저 테스트: `localhost:8787`, `127.0.0.1:8787`, `<맥 IP>:8787`은 쿠키가 따로라 각각 다른 유저
+- 로컬은 토큰 없이 열면 **개발용 입장** 폼이 뜹니다 (`/dev-login?name=이름`, 로컬 전용)
+- 여러 유저 테스트: `localhost`, `127.0.0.1`, `team.localhost`는 쿠키가 따로라 각각 다른 유저
 - 대기열 테스트: `npx wrangler dev --var VILLAGE_CAPACITY:2`
-- 실제 앱 토큰 테스트: `curl -H "Authorization: <dev 토큰>" -i http://localhost:8787/` → `Set-Cookie: bv_session=...`
-- 데이터 초기화: `npm run reset:local`
-- 랭킹 대시보드: `/dashboard` (입장 인원에 포함되지 않음)
-
-## 배포 (production)
-
-```bash
-npx wrangler login
-npx wrangler d1 create boong-village          # 출력된 database_id를 wrangler.jsonc env.production에 넣기
-npm run db:migrate:prod
-npx wrangler secret put SESSION_SECRET --env production   # 긴 랜덤 문자열
-npm run deploy                                 # https://boong-village.3dollarinmypocket.workers.dev
-```
-
-production 변수는 `wrangler.jsonc`의 `env.production.vars`에 있습니다. `THREEDOLLARS_API`는 운영 API, `DEV_AUTH`는 `0`, `VILLAGE_CAPACITY`는 `50`입니다.
+- 시크릿(환경마다 설정, 레포에 없음): `SESSION_SECRET`, `THREEDOLLARS_UA`(로컬은 `.dev.vars`), 선택 `INVITE_CODE`
+  ```bash
+  npx wrangler secret put SESSION_SECRET --env dev   # 또는 --env production
+  ```
 
 ## 로그인 모드 (`AUTH_MODE`)
 
 | 값 | 동작 |
 |---|---|
-| `guest` (지금) | 가슴속 3천원 로그인 없이 "입장하기"만 누르면 기기별 게스트 ID(30일 쿠키)로 입장. `INVITE_CODE` 시크릿을 넣으면 입장 코드가 필요해짐 |
-| `app` | 앱 웹뷰의 `Authorization` 토큰으로만 입장 (아래 앱 연동) |
+| `hybrid` (dev·production 현재값) | 토큰이 없으면 게스트(기기별 30일 쿠키), 앱이 `Authorization` 토큰을 넘기면 3천원 계정으로 로그인. **앱 업데이트 전후 재배포 없이 그대로 동작** |
+| `guest` | 토큰을 무시하고 게스트만 |
+| `app` | 토큰이 있어야만 입장 |
 
-입장 코드 설정: `npx wrangler secret put INVITE_CODE --env production` (지우면 코드 없이 입장)
+- 계정 연동: 3천원 `userId` ↔ 게임 플레이어 키를 `accounts` 테이블에 저장합니다. 플레이어 키는 무작위 값이라 랭킹 등에 3천원 내부 ID가 노출되지 않습니다
+- 게스트로 플레이하던 기기에서 처음 토큰이 들어오면 **그 게스트 캐릭터·자본을 계정으로 이어받습니다** (`linked_from_guest = 1`). 이미 다른 계정에 연결된 게스트는 이어받지 않습니다
+- 잘못되거나 만료된 토큰은 무시하고 게스트로 진행합니다
+- 입장 코드: `npx wrangler secret put INVITE_CODE --env production` (지우면 코드 없이 입장)
+
+## 남용 방지
+
+- 게스트 생성: IP당 10분에 30회
+- WebSocket 연결: IP당 1분에 60회
+- 게임 메시지: 연결마다 초당 15개(순간 40개), 4KB 초과 메시지는 연결 종료
+- `/ws`, `/guest-login`은 같은 출처(Origin)에서 온 요청만 받음
 
 ## 앱 연동 (iOS 예시)
 
-웹뷰 첫 요청에만 헤더를 붙이면 됩니다. 이후 통신은 세션 쿠키로 인증합니다.
+앱 업데이트 전에는 기존 인앱 브라우저 딥링크로 게스트 모드로 열 수 있습니다.
+```
+dollars://browser?url=https://boong-village.3dollarinmypocket.workers.dev/&title=붕어빌리지
+```
+
+앱 업데이트에서는 인앱 브라우저가 **게임 도메인일 때만** 첫 요청에 토큰을 붙입니다. 이후 통신은 세션 쿠키로 인증합니다.
 
 ```swift
-var request = URLRequest(url: URL(string: "https://boong-village.3dollarinmypocket.workers.dev/")!)
-request.setValue(Preference.shared.authToken, forHTTPHeaderField: "Authorization")
+// Debug 앱 → dev 환경, Release 앱 → production 환경
+private let tokenAllowedHosts: Set<String> = [
+    "boong-village-dev.3dollarinmypocket.workers.dev",
+    "boong-village.3dollarinmypocket.workers.dev",
+]
+
+var request = URLRequest(url: url)
+if let host = url.host, tokenAllowedHosts.contains(host) {
+    request.setValue(Preference.shared.authToken, forHTTPHeaderField: "Authorization")
+}
 webView.load(request)
 ```
 
-- 세션 쿠키는 12시간 유효합니다. 만료되면 "앱에서 다시 열어 주세요" 화면이 뜹니다
-- 토큰 검증용 API 호출 설정(`THREEDOLLARS_UA`)은 레포에 두지 않고 Cloudflare 시크릿으로 관리합니다: `npx wrangler secret put THREEDOLLARS_UA --env production` (로컬은 `.dev.vars`)
+- 인앱 브라우저는 약관·외부 링크 등에도 쓰이므로 도메인 제한 없이 토큰을 붙이면 외부 사이트로 토큰이 유출됩니다
+- 세션 쿠키는 30일 유효하며, 게임을 열 때마다 토큰을 붙이면 매번 갱신됩니다
 
 ## Cloudflare 무료 플랜 기준 예상 사용량 (동시 50명)
 
@@ -111,8 +131,14 @@ SELECT * FROM daily_visitors;
 Cloudflare 대시보드 → **Analytics & logs → Web analytics → boong-village.3dollarinmypocket.workers.dev**에서 일별 방문·페이지뷰·기기·국가를 그래프로 봅니다.
 비콘은 운영 주소에서만 로드됩니다(로컬 개발은 집계 안 함). 광고 차단기 사용자는 빠지고 같은 사람의 재방문도 각각 세므로, 정확한 사람 수는 위 D1 `daily_visitors`를 기준으로 봅니다.
 
+## 에셋과 라이선스
+
+- `public/assets/Pretendard-*.otf`: Pretendard, SIL Open Font License 1.1 — [LICENSES/Pretendard-OFL.txt](LICENSES/Pretendard-OFL.txt)
+- 로고·캐릭터·카테고리 아이콘 등 가슴속 3천원 브랜드 에셋은 가슴속 3천원에 저작권이 있으며 이 레포 밖에서의 사용을 허락하지 않습니다
+
 ## 남은 일
 
+- NPC 판매 금액을 서버가 판정하도록 변경 (지금은 클라이언트가 신고 → 랭킹 조작 가능)
 - 판매·주문 원장(감사 로그) 테이블: 무료 플랜 쓰기 한도 때문에 지금은 누적값만 저장
 - 닉네임·메시지 욕설 필터, 신고
 - 네트워크가 잠깐 끊겼을 때 자리 유지(재접속 유예 시간)

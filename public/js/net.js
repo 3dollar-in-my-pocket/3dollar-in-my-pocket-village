@@ -58,7 +58,7 @@ class Net {
       this.pending.forEach(({ reject }) => reject(new Error('연결이 끊겼어요')));
       this.pending.clear();
       this.emit('connection', false);
-      if ([4001, 4002, 4003, 4004].includes(e.code)) this.stopped = true;
+      if ([4001, 4002, 4003, 4004, 4005].includes(e.code)) this.stopped = true;
       if (!this.stopped) setTimeout(() => this.connect(this.options), 2000);
     };
     clearInterval(this.pinger);

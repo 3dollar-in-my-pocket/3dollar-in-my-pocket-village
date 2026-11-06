@@ -218,6 +218,7 @@ net.on('kicked', (k) => {
   const text = {
     replaced: ['다른 화면에서 접속했어요', '같은 계정으로 다른 곳에서 입장해서 여기 연결은 끊겼어요.'],
     idle: ['오래 쉬어서 자리를 양보했어요', '10분 동안 활동이 없어서 기다리던 사장님께 자리를 넘겼어요.'],
+    flood: ['요청이 너무 많아요', '짧은 시간에 너무 많은 요청이 와서 연결을 잠시 끊었어요. 잠시 후 다시 들어와 주세요.'],
   }[k.reason] || ['연결이 끊겼어요', ''];
   showGate(text[0], text[1], '<button class="btn primary big" id="rejoin">다시 들어가기</button>');
   $('#rejoin').addEventListener('click', () => {
