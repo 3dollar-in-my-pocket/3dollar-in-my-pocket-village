@@ -4,6 +4,12 @@ import { presetPortrait } from './people.js';
 import { orderText, QUICK_MESSAGES } from './art.js';
 import { GrillView, TrayView, FISH_IMG, MOLD_COUNT } from './stall-ui.js';
 
+function restartAnim(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+
 const CYCLE = [
   ['empty', 1.2],
   ['batter', 0.8],
@@ -64,6 +70,13 @@ export class Visit {
     this.ownerId = null;
     this.cart = { red: 0, cream: 0 };
     document.getElementById('visit-close').addEventListener('click', () => this.close());
+    this.thumbsBtn = document.getElementById('thumbs-btn');
+    this.thumbsCombo = document.getElementById('thumbs-combo');
+    this.thumbsFx = document.getElementById('thumbs-fx');
+    this.thumbsBtn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.thumbsUp();
+    });
 
     net.on('order', (o) => {
       if (!this.active || o.sellerId !== this.ownerId || o.buyerId !== net.me?.id) return;
@@ -91,7 +104,12 @@ export class Visit {
     const seller = net.players.get(ownerId);
     this.bot = seller?.bot ? new BotGrill() : null;
     this.face.src = presetPortrait(seller?.character, { size: 360, pose: 'front' });
-    this.meBack.src = presetPortrait(net.me?.character, { size: 280, pose: 'back' });
+    this.meBackSrc = presetPortrait(net.me?.character, { size: 280, pose: 'back' });
+    this.meThumbsSrc = net.features?.thumbs ? presetPortrait(net.me?.character, { size: 280, pose: 'back-thumbs' }) : null;
+    this.meBack.src = this.meBackSrc;
+    this.resetThumbs();
+    this.thumbsBtn.classList.toggle('hidden', !net.features?.thumbs);
+    this.el.classList.toggle('has-thumbs', !!net.features?.thumbs);
     this.meSaid = null;
     this.meBubble.classList.add('hidden');
     this.el.classList.remove('hidden');
@@ -116,9 +134,90 @@ export class Visit {
     if (!this.active) return;
     this.active = false;
     clearInterval(this.loop);
+    this.flushThumbs();
+    this.resetThumbs();
     net.request('watch', { sellerId: null }).catch(() => {});
     this.el.classList.add('hidden');
     this.onClose?.();
+  }
+
+  /* ---------- 따봉 ---------- */
+
+  resetThumbs() {
+    clearTimeout(this.thumbsPoseTimer);
+    clearTimeout(this.thumbsComboTimer);
+    clearTimeout(this.thumbsFlushTimer);
+    this.thumbsFlushTimer = null;
+    this.thumbsPending = 0;
+    this.thumbsStreak = 0;
+    this.thumbsCombo.textContent = '';
+    this.thumbsBtn.classList.remove('combo');
+    this.meBack.classList.remove('thumbs', 'posed');
+    this.thumbsFx.innerHTML = '';
+  }
+
+  thumbsUp() {
+    if (!this.active || !net.features?.thumbs) return;
+    // 포즈: 누르는 동안 유지, 마지막 탭 후 0.7초 뒤 원래대로
+    if (this.meThumbsSrc) this.meBack.src = this.meThumbsSrc;
+    this.meBack.classList.add('posed');
+    restartAnim(this.meBack, 'thumbs');
+    clearTimeout(this.thumbsPoseTimer);
+    this.thumbsPoseTimer = setTimeout(() => {
+      this.meBack.src = this.meBackSrc;
+      this.meBack.classList.remove('thumbs', 'posed');
+    }, 700);
+
+    restartAnim(this.thumbsBtn, 'tap');
+    this.thumbsStreak += 1;
+    if (this.thumbsStreak > 1) {
+      this.thumbsCombo.textContent = `×${this.thumbsStreak}`;
+      restartAnim(this.thumbsBtn, 'combo');
+    }
+    clearTimeout(this.thumbsComboTimer);
+    this.thumbsComboTimer = setTimeout(() => {
+      this.thumbsStreak = 0;
+      this.thumbsCombo.textContent = '';
+      this.thumbsBtn.classList.remove('combo');
+    }, 1200);
+
+    this.spawnThumb();
+    restartAnim(this.face, 'thanked');
+    navigator.vibrate?.(12);
+
+    // 연타는 모아서 0.4초마다 한 번만 서버로 보냄
+    this.thumbsPending += 1;
+    if (!this.thumbsFlushTimer) this.thumbsFlushTimer = setTimeout(() => this.flushThumbs(), 400);
+  }
+
+  flushThumbs() {
+    clearTimeout(this.thumbsFlushTimer);
+    this.thumbsFlushTimer = null;
+    const count = this.thumbsPending;
+    this.thumbsPending = 0;
+    if (!count || !this.ownerId) return;
+    net.request('thumbs', { sellerId: this.ownerId, count }).catch(() => {});
+  }
+
+  spawnThumb() {
+    const host = this.thumbsFx.getBoundingClientRect();
+    const from = this.meBack.getBoundingClientRect();
+    const to = this.face.getBoundingClientRect();
+    const x0 = from.left + from.width * 0.72 - host.left;
+    const y0 = from.top + from.height * 0.12 - host.top;
+    const x1 = to.left + to.width * (0.3 + Math.random() * 0.4) - host.left;
+    const y1 = to.top + to.height * (0.15 + Math.random() * 0.25) - host.top;
+    const el = document.createElement('span');
+    el.className = 'thumb-fly';
+    el.textContent = Math.random() < 0.15 ? '❤️' : '👍';
+    el.style.left = `${x0}px`;
+    el.style.top = `${y0}px`;
+    el.style.setProperty('--dx', `${x1 - x0}px`);
+    el.style.setProperty('--dy', `${y1 - y0}px`);
+    el.style.setProperty('--rot', `${(Math.random() - 0.5) * 50}deg`);
+    el.addEventListener('animationend', () => el.remove());
+    this.thumbsFx.appendChild(el);
+    while (this.thumbsFx.childElementCount > 24) this.thumbsFx.firstElementChild.remove();
   }
 
   myWaitingOrder() {

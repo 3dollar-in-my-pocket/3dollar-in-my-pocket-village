@@ -14,6 +14,7 @@ const RANKING_SIZE = 50;
 const MAX_MESSAGE_BYTES = 4096;
 const MSG_BURST = 40;
 const MSG_PER_SEC = 15;
+const MAX_THUMBS_PER_REQ = 20;
 
 const CHARACTERS = ['beanie', 'bucket', 'apron', 'curly', 'cap', 'earmuff'];
 const PHASES = new Set(['empty', 'batter', 'filled', 'side1', 'flip', 'side2', 'done', 'burnt']);
@@ -38,6 +39,7 @@ export class Village extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.capacity = Math.max(1, Number(env.VILLAGE_CAPACITY || 50));
+    this.features = { thumbs: env.FEATURE_THUMBS === '1' };
     this.players = new Map();
     this.orders = new Map();
     this.grills = new Map();
@@ -314,7 +316,7 @@ export class Village extends DurableObject {
     server.serializeAttachment({ role: 'player', uid, appName, state: canEnter ? 'active' : 'queued', queuedAt: Date.now() });
 
     const me = this.players.get(uid);
-    this.send(server, { t: 'hello', uid, appName, me: me ? this.publicPlayer(me) : null, capacity: this.capacity });
+    this.send(server, { t: 'hello', uid, appName, me: me ? this.publicPlayer(me) : null, capacity: this.capacity, features: this.features });
     if (canEnter) this.admit(server);
     else this.updateQueue();
     this.broadcastStats(true);
@@ -778,6 +780,17 @@ export class Village extends DurableObject {
         this.setAtt(ws, { watch: sellerId });
         const g = sellerId && this.grills.get(sellerId);
         return { grill: g ? { sellerId, ...g } : null };
+      }
+
+      case 'thumbs': {
+        if (!this.features.thumbs) throw new GameError('알 수 없는 요청이에요');
+        const p = this.requireMe(uid);
+        const seller = this.players.get(d.sellerId);
+        if (!seller?.stall || seller.id === uid) throw new GameError('따봉을 보낼 수 없어요');
+        const count = Math.max(1, Math.min(MAX_THUMBS_PER_REQ, Math.floor(Number(d.count) || 1)));
+        this.rateLimit(uid, 'thumbs', 250);
+        if (!seller.bot) this.sendTo(seller.id, { t: 'thumbs', fromId: uid, fromName: p.nickname, fromCharacter: p.character, count });
+        return null;
       }
 
       default:

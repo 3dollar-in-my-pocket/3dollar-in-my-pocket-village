@@ -536,3 +536,47 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 
 .guest-login { justify-content: center; }
 .guest-login .btn.big { width: 100%; }
+
+/* ---------- 따봉 (thumbs up) ---------- */
+#visit.has-thumbs .me-bubble { left: 158px; max-width: calc(100% - 236px); }
+/* 따봉 포즈 이미지는 카메라를 0.2 옮겨 그려서 몸 위치를 맞춰 줌 */
+.me-back.posed { translate: 20px 0; }
+.thumbs-btn {
+  position: absolute; right: 14px; bottom: -86px; width: 58px; height: 58px; padding: 0; border: 0; border-radius: 50%;
+  background: #fff; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25), inset 0 -3px 0 rgba(0, 0, 0, 0.08);
+  font-size: 28px; line-height: 58px; text-align: center; cursor: pointer; z-index: 7;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none;
+}
+.thumbs-btn span { display: inline-block; }
+.thumbs-btn.tap span { animation: thumbTap 0.28s ease-out; }
+@keyframes thumbTap { 40% { transform: scale(1.35) rotate(-14deg); } }
+.thumbs-combo {
+  position: absolute; top: -8px; right: -6px; min-width: 22px; padding: 2px 6px; border-radius: 11px;
+  background: var(--pink); color: #fff; font-size: 12px; font-weight: 800; line-height: 16px; opacity: 0; transform: scale(0.6);
+}
+.thumbs-btn.combo .thumbs-combo { opacity: 1; transform: scale(1); animation: comboPop 0.25s ease-out; }
+@keyframes comboPop { 0% { transform: scale(1.5); } }
+.me-back.thumbs { animation: thumbsHop 0.32s ease-out; transform-origin: 50% 100%; }
+@keyframes thumbsHop { 35% { transform: translateY(-10px) rotate(4deg) scale(1.04); } 70% { transform: translateY(0) rotate(-1deg); } }
+.owner-face.thanked { animation: ownerThanked 0.45s ease-out, idle 2.2s ease-in-out 0.45s infinite; }
+@keyframes ownerThanked { 30% { transform: translateY(-8px) scale(1.04); } 60% { transform: translateY(0) rotate(-2deg); } }
+.thumbs-fx { position: absolute; inset: 0; pointer-events: none; z-index: 8; overflow: hidden; }
+.thumb-fly {
+  position: absolute; font-size: 30px; line-height: 1; margin: -15px 0 0 -15px; will-change: transform, opacity;
+  animation: thumbFly 0.85s cubic-bezier(0.3, 0.7, 0.4, 1) forwards;
+}
+@keyframes thumbFly {
+  0% { transform: translate(0, 0) scale(0.4); opacity: 0; }
+  15% { transform: translate(calc(var(--dx) * 0.08), calc(var(--dy) * 0.12 - 18px)) scale(1.3); opacity: 1; }
+  75% { opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(0.9) rotate(var(--rot)); opacity: 0; }
+}
+.thumb-pop { position: absolute; z-index: 20; font-size: 26px; line-height: 1; margin-left: -13px; pointer-events: none; animation: thumbPop 1s ease-out forwards; }
+@keyframes thumbPop { 0% { transform: translate(0, 0) scale(0.4); opacity: 0; } 20% { transform: translate(calc(var(--dx) * 0.3), -14px) scale(1.25); opacity: 1; } 100% { transform: translate(var(--dx), -70px) scale(1); opacity: 0; } }
+.customer .customer-face.posed { translate: 10px 0; }
+.customer .customer-face.thumbs-hop { animation: thumbsHop 0.32s ease-out, idle 1.8s ease-in-out 0.32s infinite; transform-origin: 50% 100%; }
+.thumb-visitor { width: 96px; }
+.visitor-bubble {
+  margin: 0 0 6px; padding: 6px 10px; border-radius: 14px; background: #fff; color: var(--pink); font-size: 13px; font-weight: 800;
+  box-shadow: 0 0 0 2px var(--pink), 0 4px 10px rgba(0, 0, 0, 0.2); animation: bubblePop 0.3s ease; white-space: nowrap;
+}

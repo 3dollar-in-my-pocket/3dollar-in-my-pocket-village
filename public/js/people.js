@@ -284,31 +284,57 @@ export function portrait(cfg, { size = 200, pose = 'bust' } = {}) {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   const person = buildPerson(cfg);
-  person.rotation.y = pose === 'front' ? 0 : pose === 'back' ? Math.PI - 0.35 : -0.32;
+  const back = pose === 'back' || pose === 'back-thumbs';
+  person.rotation.y = pose === 'front' ? 0 : back ? Math.PI - 0.35 : -0.32;
   if (pose === 'wave') {
     person.userData.arms[1].rotation.z = 2.4;
     person.userData.arms[1].rotation.x = -0.2;
   }
   scene.add(person);
-  if (pose === 'back') {
+  let thumb = null;
+  if (pose === 'back-thumbs') thumb = raiseThumb(scene, person);
+  else if (pose === 'thumbs') thumb = raiseThumb(scene, person, true);
+  if (back) {
+    const shift = thumb ? 0.2 : 0; // 든 팔이 잘리지 않게 살짝 오른쪽을 비춤
     camera.fov = 24;
-    camera.position.set(0, 1.5, 3.1);
-    camera.lookAt(0, 1.02, 0);
+    camera.position.set(shift, 1.5, 3.1);
+    camera.lookAt(shift, 1.02, 0);
   } else if (pose === 'full') {
     camera.fov = 30;
     camera.position.set(0, 0.95, 4.2);
     camera.lookAt(0, 0.82, 0);
   } else {
+    const shift = thumb ? 0.15 : 0;
     camera.fov = 26;
-    camera.position.set(0, 1.12, 3.2);
-    camera.lookAt(0, 0.98, 0);
+    camera.position.set(shift, 1.12, 3.2);
+    camera.lookAt(shift, 0.98, 0);
   }
   camera.updateProjectionMatrix();
   renderer.render(scene, camera);
   const url = renderer.domElement.toDataURL('image/png');
   scene.remove(person);
+  if (thumb) scene.remove(thumb);
   portraitCache.set(cacheKey, url);
   return url;
+}
+
+// 뒷모습에서 카메라 쪽(화면 오른쪽) 팔을 들어 사장님 쪽으로 따봉
+// 앞모습(front=true)은 화면 오른쪽에 오는 왼팔을 듦
+function raiseThumb(scene, person, front = false) {
+  const { arms } = person.userData;
+  const arm = front ? arms[1] : arms[0];
+  arm.rotation.z = front ? 2.15 : -2.15;
+  arm.rotation.x = front ? -0.15 : 0.2;
+  const hand = arm.children[1];
+  hand.scale.set(1.55, 1.35, 1.45);
+  person.updateMatrixWorld(true);
+  const pos = new THREE.Vector3();
+  hand.getWorldPosition(pos);
+  const thumb = new THREE.Mesh(geo('thumb', () => new THREE.CapsuleGeometry(0.058, 0.1, 4, 10)), hand.material);
+  thumb.position.set(pos.x - 0.03, pos.y + 0.16, pos.z);
+  thumb.rotation.z = 0.35;
+  scene.add(thumb);
+  return thumb;
 }
 
 export const presetPortrait = (key, opts) => portrait(presetOf(key), opts);
