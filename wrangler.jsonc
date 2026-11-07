@@ -62,7 +62,7 @@
         "BOTS": "0",
         "AUTH_MODE": "hybrid",
         "DEV_AUTH": "0",
-        "FEATURE_THUMBS": "0"
+        "FEATURE_THUMBS": "1"
       },
       "durable_objects": {
         "bindings": [{ "name": "VILLAGE", "class_name": "Village" }]
