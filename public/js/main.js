@@ -5,6 +5,8 @@ import { Shop } from './shop.js';
 import { Visit } from './visit.js';
 import { PRESETS, presetOf, presetPortrait } from './people.js';
 import { won, escapeHtml } from './data.js';
+import { itemsOf, countItems } from './economy.js';
+import { Store } from './store.js';
 
 const $ = (sel) => document.querySelector(sel);
 const PREF_KEY = 'boong-village:character';
@@ -40,6 +42,7 @@ await loadArt();
 const world = new World($('#world'), $('#labels'), {
   onGroundTap: handleGroundTap,
   onStallTap: handleStallTap,
+  onStoreTap: handleStoreTap,
 });
 
 function backToMap() {
@@ -62,6 +65,7 @@ const shop = new Shop({
 });
 
 const visit = new Visit({ toast, onClose: backToMap });
+const store = new Store({ toast, onClose: backToMap });
 
 /* ---------- Gate (loading · queue · auth · kicked) ---------- */
 
@@ -75,6 +79,8 @@ function showGate(title, desc, extra = '') {
   $('#hud').classList.add('hidden');
   $('#shop').classList.add('hidden');
   $('#visit').classList.add('hidden');
+  $('#store').classList.add('hidden');
+  store.active = false;
 }
 
 function hideGate() {
@@ -156,6 +162,7 @@ $('#nickname').addEventListener('keydown', (e) => {
 
 net.on('hello', (h) => {
   state.appName = h.appName;
+  if (h.features?.shop) world.enableStore();
   if (h.me) {
     state.character = presetOf(h.me.character).key;
     $('#nickname').value = h.me.nickname;
@@ -247,7 +254,9 @@ net.on('snapshot', (data) => {
 net.on('player', (p) => {
   if (!p.online && !p.bot && p.id !== net.uid) world.removePlayer(p.id);
   else world.syncPlayer(p);
-  if (p.id === net.uid) renderHud();
+  if (p.id === net.uid) {
+    renderHud();
+  }
 });
 
 net.on('move', (m) => world.moveAvatar(m.id, m.x, m.z));
@@ -256,7 +265,7 @@ net.on('order', (o) => {
   if (o.buyerId !== net.me?.id) return;
   const watching = visit.active && visit.ownerId === o.sellerId;
   if (o.status === 'done') {
-    toast(`${o.sellerName} 사장님께 붕어빵 ${o.red + o.cream}마리를 받았어요!`, 'good');
+    toast(`${o.sellerName} 사장님께 붕어빵 ${countItems(itemsOf(o))}마리를 받았어요!`, 'good');
   } else if (o.status === 'cancelled' && o.reason !== 'buyer') {
     const why = { closed: '가게가 문을 닫아서', timeout: '시간이 너무 지나서', seller: '사장님이' }[o.reason] || '';
     toast(`${why} 주문이 취소되고 ${won(o.price)} 환불됐어요`);
@@ -403,6 +412,22 @@ async function handleStallTap(ownerId) {
   visit.open(ownerId);
 }
 
+/* ---------- 붕어상회 (장비·속재료 상점) ---------- */
+
+async function handleStoreTap() {
+  if (!net.me || state.placing || state.mode !== 'map') return;
+  state.mode = 'store';
+  const spot = world.storeSpot();
+  const front = world.clampPoint(spot.x, spot.z);
+  const here = world.myPosition();
+  if (Math.hypot(here.x - front.x, here.z - front.z) > 14) world.teleportMe(front.x, front.z + 5);
+  net.post('/api/move', front).catch(() => {});
+  await Promise.race([world.walkMeTo(front.x, front.z), new Promise((r) => setTimeout(r, 2500))]);
+  $('#hud').classList.add('hidden');
+  world.setPaused(true);
+  store.open();
+}
+
 /* ---------- Ranking ---------- */
 
 function openRankSheet() {
@@ -424,7 +449,7 @@ function renderRankSheet() {
       return `<div class="podium-item r${rank}">
         <img src="${presetPortrait(p.character, { size: 160 })}" alt="">
         <span class="name">${escapeHtml(p.nickname)}</span>
-        <span class="money">${won(p.capital)}</span>
+        <span class="money">${won(rankValue(p))}</span>
         <div class="block">${rank}</div>
       </div>`;
     })
@@ -439,18 +464,21 @@ function renderRankSheet() {
           <strong>${p.online ? '<i class="online-dot"></i>' : ''}${escapeHtml(p.nickname)}${p.id === meId ? ' (나)' : ''}${p.bot ? ' · NPC' : ''}</strong>
           <span>${p.sold}마리 판매${p.stall?.open ? ' · 영업중' : ''}</span>
         </div>
-        <div class="cap">${won(p.capital)}<small>자본</small></div>
+        <div class="cap">${won(rankValue(p))}<small>${byEarned() ? '누적 매출' : '자본'}</small></div>
       </div>`)
     .join('');
   const myRank = ranking.findIndex((p) => p.id === meId) + 1;
   $('#sheet-body').innerHTML = `
     <div class="rank-head">
-      <div><h2>사장님 랭킹</h2><p class="sub" style="margin:4px 0 0">자본이 많은 순서 · 실시간${myRank ? ` · 나는 ${myRank}위` : ''}</p></div>
+      <div><h2>사장님 랭킹</h2><p class="sub" style="margin:4px 0 0">${byEarned() ? '누적 매출이 많은 순서' : '자본이 많은 순서'} · 실시간${myRank ? ` · 나는 ${myRank}위` : ''}</p></div>
       <a href="/dashboard" target="_blank" rel="noopener">대시보드 ↗</a>
     </div>
     <div class="podium">${podium}</div>
     <div class="rank-list">${rows}</div>`;
 }
+
+const byEarned = () => !!net.features?.shop;
+const rankValue = (p) => (byEarned() ? p.earned ?? 0 : p.capital);
 
 function closeSheet() {
   state.sheet = null;

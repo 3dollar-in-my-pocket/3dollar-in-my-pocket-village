@@ -1,4 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
+import {
+  FILLINGS, FILLING_KEYS, BASE_FILLINGS, EQUIPMENT, equipCost, normalizeUpgrades, priceOfItems, countItems, itemsOf, STORE_POS, STORE_GAP,
+} from '../public/js/economy.js';
 
 const START_CAPITAL = 10000;
 const MAP_LIMIT = 34;
@@ -15,6 +18,8 @@ const MAX_MESSAGE_BYTES = 4096;
 const MSG_BURST = 40;
 const MSG_PER_SEC = 15;
 const MAX_THUMBS_PER_REQ = 20;
+const MAX_MOLDS = 8;
+const MAX_TRAY = 40;
 
 const CHARACTERS = ['beanie', 'bucket', 'apron', 'curly', 'cap', 'earmuff'];
 const PHASES = new Set(['empty', 'batter', 'filled', 'side1', 'flip', 'side2', 'done', 'burnt']);
@@ -33,13 +38,23 @@ const cleanText = (v, max) => String(v || '').replace(/[\u0000-\u001f]/g, ' ').t
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const kstDay = () => new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+const parseJson = (v) => {
+  try {
+    return v ? JSON.parse(v) : null;
+  } catch {
+    return null;
+  }
+};
+// earned 컬럼이 없던 시절 데이터: 자본 변화 + 사 먹은 붕어빵(마리당 약 800원)으로 추정
+const estimateEarned = (r) => Math.max(0, (r.capital ?? 0) - 10000 + (r.bought ?? 0) * 800);
+
 class GameError extends Error {}
 
 export class Village extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.capacity = Math.max(1, Number(env.VILLAGE_CAPACITY || 50));
-    this.features = { thumbs: env.FEATURE_THUMBS === '1' };
+    this.features = { thumbs: env.FEATURE_THUMBS === '1', shop: env.FEATURE_SHOP === '1' };
     this.players = new Map();
     this.orders = new Map();
     this.grills = new Map();
@@ -68,6 +83,8 @@ export class Village extends DurableObject {
         capital: r.capital,
         sold: r.sold,
         bought: r.bought,
+        earned: r.earned ?? estimateEarned(r),
+        upgrades: normalizeUpgrades(parseJson(r.upgrades)),
         x: r.pos_x ?? 0,
         z: r.pos_z ?? 6,
         stall: r.stall_x == null ? null : { x: r.stall_x, z: r.stall_z, open: false, name: `${r.nickname}네 붕어빵` },
@@ -106,6 +123,8 @@ export class Village extends DurableObject {
         capital: s.capital,
         sold: s.sold,
         bought: 0,
+        earned: s.capital,
+        upgrades: normalizeUpgrades(s.upgrades),
         x: s.x,
         z: s.z,
         bot: true,
@@ -134,6 +153,7 @@ export class Village extends DurableObject {
       if (!p.bot || now < p.nextSaleAt) continue;
       const count = 1 + Math.floor(Math.random() * 4);
       p.capital += priceOf(count);
+      p.earned += priceOf(count);
       p.sold += count;
       p.nextSaleAt = now + 12000 + Math.random() * 25000;
       this.pushPlayer(p);
@@ -166,6 +186,17 @@ export class Village extends DurableObject {
     for (const id of ids) {
       const p = this.players.get(id);
       if (!p || p.bot) continue;
+      if (this.features.shop) {
+        // FEATURE_SHOP 환경은 0004 마이그레이션(earned, upgrades 컬럼)이 적용돼 있어야 함
+        stmts.push(this.env.DB.prepare(
+          `INSERT INTO players (user_id, nickname, avatar, capital, sold, bought, stall_x, stall_z, pos_x, pos_z, created_at, updated_at, earned, upgrades)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)
+           ON CONFLICT(user_id) DO UPDATE SET nickname = excluded.nickname, avatar = excluded.avatar, capital = excluded.capital,
+             sold = excluded.sold, bought = excluded.bought, stall_x = excluded.stall_x, stall_z = excluded.stall_z,
+             pos_x = excluded.pos_x, pos_z = excluded.pos_z, updated_at = excluded.updated_at, earned = excluded.earned, upgrades = excluded.upgrades`,
+        ).bind(p.id, p.nickname, p.character, p.capital, p.sold, p.bought, p.stall?.x ?? null, p.stall?.z ?? null, p.x, p.z, now, p.earned, JSON.stringify(p.upgrades)));
+        continue;
+      }
       stmts.push(this.env.DB.prepare(
         `INSERT INTO players (user_id, nickname, avatar, capital, sold, bought, stall_x, stall_z, pos_x, pos_z, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
@@ -469,6 +500,8 @@ export class Village extends DurableObject {
       capital: p.capital,
       sold: p.sold,
       bought: p.bought,
+      earned: p.earned,
+      upgrades: this.features.shop ? p.upgrades : undefined,
       x: p.x,
       z: p.z,
       stall: p.stall,
@@ -483,13 +516,14 @@ export class Village extends DurableObject {
 
   ranking() {
     return [...this.players.values()]
-      .sort((x, y) => y.capital - x.capital || y.sold - x.sold)
+      .sort(this.features.shop ? (x, y) => y.earned - x.earned || y.sold - x.sold : (x, y) => y.capital - x.capital || y.sold - x.sold)
       .slice(0, RANKING_SIZE)
       .map((p) => ({
         id: p.id,
         nickname: p.nickname,
         character: p.character,
         capital: p.capital,
+        earned: p.earned,
         sold: p.sold,
         bot: !!p.bot,
         online: !!p.bot || this.online.has(p.id),
@@ -551,6 +585,23 @@ export class Village extends DurableObject {
     this.rateMarks.set(mark, now);
   }
 
+  menuOf(p) {
+    return this.features.shop ? p.upgrades?.fillings || BASE_FILLINGS : BASE_FILLINGS;
+  }
+
+  // { items: { red: 2 } } 또는 예전 형식 { red, cream }
+  parseItems(d, menu) {
+    const src = d.items && typeof d.items === 'object' ? d.items : { red: d.red, cream: d.cream };
+    const items = {};
+    for (const k of FILLING_KEYS) {
+      const n = toCount(src[k]);
+      if (!n) continue;
+      if (!menu.includes(k)) throw new GameError('지금은 없는 메뉴예요');
+      items[k] = n;
+    }
+    return items;
+  }
+
   requireMe(uid) {
     const p = this.players.get(uid);
     if (!p) throw new GameError('먼저 입장해 주세요');
@@ -605,12 +656,13 @@ export class Village extends DurableObject {
     o.doneAt = Date.now();
     if (seller) {
       seller.capital += o.price;
-      seller.sold += o.red + o.cream;
+      seller.earned += o.price;
+      seller.sold += countItems(itemsOf(o));
       this.dirty.add(seller.id);
       this.pushPlayer(seller);
     }
     if (buyer) {
-      buyer.bought += o.red + o.cream;
+      buyer.bought += countItems(itemsOf(o));
       this.dirty.add(buyer.id);
       this.pushPlayer(buyer);
     }
@@ -626,7 +678,7 @@ export class Village extends DurableObject {
         const character = CHARACTERS.includes(d.character) ? d.character : CHARACTERS[0];
         let p = this.players.get(uid);
         if (!p) {
-          p = { id: uid, nickname, character, capital: START_CAPITAL, sold: 0, bought: 0, x: (Math.random() - 0.5) * 6, z: 6 + Math.random() * 3, stall: null };
+          p = { id: uid, nickname, character, capital: START_CAPITAL, sold: 0, bought: 0, earned: 0, upgrades: normalizeUpgrades(null), x: (Math.random() - 0.5) * 6, z: 6 + Math.random() * 3, stall: null };
           this.players.set(uid, p);
         } else {
           p.nickname = nickname;
@@ -653,6 +705,7 @@ export class Village extends DurableObject {
         if (p.stall?.open) throw new GameError('장사 중에는 가게를 옮길 수 없어요');
         const x = clampCoord(d.x);
         const z = clampCoord(d.z);
+        if (this.features.shop && Math.hypot(STORE_POS.x - x, STORE_POS.z - z) < STORE_GAP) throw new GameError('상점과 너무 가까워요');
         for (const other of this.visiblePlayers()) {
           if (other.id === uid || !other.stall) continue;
           if (Math.hypot(other.stall.x - x, other.stall.z - z) < STALL_GAP) throw new GameError(`${other.nickname}님 가게와 너무 가까워요`);
@@ -681,13 +734,13 @@ export class Village extends DurableObject {
       case 'sale': {
         const p = this.requireMe(uid);
         if (!p.stall?.open) throw new GameError('영업 중이 아니에요');
-        const red = toCount(d.red);
-        const cream = toCount(d.cream);
-        const count = red + cream;
+        const items = this.parseItems(d, this.menuOf(p));
+        const count = countItems(items);
         if (count < 1 || count > MAX_PER_SALE) throw new GameError('잘못된 주문이에요');
         this.rateLimit(uid, 'sale', 1200);
-        const price = priceOf(count);
+        const price = priceOfItems(items);
         p.capital += price;
+        p.earned += price;
         p.sold += count;
         this.dirty.add(uid);
         this.pushPlayer(p);
@@ -699,14 +752,13 @@ export class Village extends DurableObject {
         const seller = this.players.get(d.sellerId);
         if (!seller?.stall?.open) throw new GameError('지금은 영업 중이 아니에요');
         if (seller.id === uid) throw new GameError('내 가게에서는 주문할 수 없어요');
-        const red = toCount(d.red);
-        const cream = toCount(d.cream);
-        const count = red + cream;
+        const items = this.parseItems(d, this.menuOf(seller));
+        const count = countItems(items);
         if (count < 1) throw new GameError('메뉴를 골라 주세요');
         for (const o of this.orders.values()) {
           if (o.buyerId === uid && o.status === 'waiting') throw new GameError('이미 기다리는 주문이 있어요');
         }
-        const price = priceOf(count);
+        const price = priceOfItems(items);
         if (p.capital < price) throw new GameError('자본이 부족해요');
         p.capital -= price;
         const order = {
@@ -718,8 +770,9 @@ export class Village extends DurableObject {
           sellerName: seller.nickname,
           note: cleanText(d.note, 30),
           messages: [],
-          red,
-          cream,
+          items,
+          red: items.red || 0,
+          cream: items.cream || 0,
           price,
           status: 'waiting',
           createdAt: Date.now(),
@@ -763,13 +816,14 @@ export class Village extends DurableObject {
       case 'grill': {
         const p = this.requireMe(uid);
         if (!p.stall?.open) throw new GameError('영업 중이 아니에요');
-        const molds = (Array.isArray(d.molds) ? d.molds.slice(0, 6) : []).map((m) => ({
+        const molds = (Array.isArray(d.molds) ? d.molds.slice(0, MAX_MOLDS) : []).map((m) => ({
           p: PHASES.has(m?.p) ? m.p : 'empty',
-          f: m?.f === 'red' || m?.f === 'cream' ? m.f : null,
+          f: FILLINGS[m?.f] ? m.f : null,
           d: Math.max(0, Math.min(1.6, Number(m?.d) || 0)),
           h: !!m?.h,
         }));
-        const tray = { red: toCount(d.tray?.red, 12), cream: toCount(d.tray?.cream, 12) };
+        const tray = {};
+        for (const k of this.menuOf(p)) tray[k] = toCount(d.tray?.[k], MAX_TRAY);
         this.grills.set(uid, { molds, tray });
         this.sendToWatchers(uid, { t: 'grill', sellerId: uid, molds, tray });
         return null;
@@ -780,6 +834,30 @@ export class Village extends DurableObject {
         this.setAtt(ws, { watch: sellerId });
         const g = sellerId && this.grills.get(sellerId);
         return { grill: g ? { sellerId, ...g } : null };
+      }
+
+      case 'buy': {
+        if (!this.features.shop) throw new GameError('알 수 없는 요청이에요');
+        const p = this.requireMe(uid);
+        this.rateLimit(uid, 'buy', 300);
+        let cost;
+        if (d.kind === 'equip' && EQUIPMENT[d.id]) {
+          cost = equipCost(d.id, p.upgrades[d.id]);
+          if (cost == null) throw new GameError('이미 최고 단계예요');
+        } else if (d.kind === 'filling' && FILLINGS[d.id] && !BASE_FILLINGS.includes(d.id)) {
+          if (p.upgrades.fillings.includes(d.id)) throw new GameError('이미 가지고 있는 속재료예요');
+          cost = FILLINGS[d.id].unlock;
+        } else {
+          throw new GameError('살 수 없는 물건이에요');
+        }
+        if (p.capital < cost) throw new GameError('자본이 부족해요');
+        p.capital -= cost;
+        if (d.kind === 'equip') p.upgrades[d.id] += 1;
+        else p.upgrades = normalizeUpgrades({ ...p.upgrades, fillings: [...p.upgrades.fillings, d.id] });
+        this.dirty.add(uid);
+        await this.flush(); // 구매는 바로 저장 (30초 묶음 저장 전에 서버가 재시작돼도 안 사라지게)
+        this.pushPlayer(p);
+        return { player: this.publicPlayer(p), cost };
       }
 
       case 'thumbs': {

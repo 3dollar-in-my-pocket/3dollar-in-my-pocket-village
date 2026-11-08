@@ -1,7 +1,8 @@
 import { net } from './net.js';
-import { MENU, priceOf, won, escapeHtml } from './data.js';
+import { won, escapeHtml } from './data.js';
+import { FILLINGS, BASE_FILLINGS, BUNDLE_DISCOUNT, normalizeUpgrades, itemsOf, countItems, priceOfItems, itemsLabel } from './economy.js';
 import { presetPortrait } from './people.js';
-import { orderText, QUICK_MESSAGES } from './art.js';
+import { orderText, QUICK_MESSAGES, fillingIcon } from './art.js';
 import { GrillView, TrayView, FISH_IMG, MOLD_COUNT } from './stall-ui.js';
 
 function restartAnim(el, cls) {
@@ -68,7 +69,7 @@ export class Visit {
     this.trayView = new TrayView(document.getElementById('visit-tray'));
     this.active = false;
     this.ownerId = null;
-    this.cart = { red: 0, cream: 0 };
+    this.cart = {};
     document.getElementById('visit-close').addEventListener('click', () => this.close());
     this.thumbsBtn = document.getElementById('thumbs-btn');
     this.thumbsCombo = document.getElementById('thumbs-combo');
@@ -98,7 +99,7 @@ export class Visit {
   open(ownerId) {
     this.ownerId = ownerId;
     this.active = true;
-    this.cart = { red: 0, cream: 0 };
+    this.cart = {};
     this.lastOrder = null;
     this.mode = null;
     const seller = net.players.get(ownerId);
@@ -235,10 +236,17 @@ export class Visit {
     document.getElementById('visit-capital').textContent = won(net.me?.capital);
   }
 
+  sellerMenu() {
+    const seller = net.players.get(this.ownerId);
+    return net.features?.shop && !seller?.bot ? normalizeUpgrades(seller?.upgrades).fillings : BASE_FILLINGS;
+  }
+
   renderGrill(g) {
-    const empty = Array.from({ length: MOLD_COUNT }, () => ({ p: 'empty' }));
-    this.grill.render(g?.molds || empty);
-    this.trayView.render(g?.tray || { red: 0, cream: 0 });
+    const count = g?.molds?.length || MOLD_COUNT;
+    this.grill.setCount(count);
+    this.trayView.setKinds(this.sellerMenu());
+    this.grill.render(g?.molds || Array.from({ length: count }, () => ({ p: 'empty' })));
+    this.trayView.render(g?.tray || {});
   }
 
   say(text) {
@@ -297,31 +305,34 @@ export class Visit {
     this.panel.dataset.order = '';
     this.bubble.classList.remove('hidden');
     this.say('어서 오세요! 따끈한 붕어빵 있어요');
-    const { red, cream } = this.cart;
-    this.sayMe(red + cream ? `${orderText(red, cream)} 주세요!` : '음… 뭐 먹지?');
-    const count = red + cream;
-    const price = priceOf(count);
+    const menu = this.sellerMenu();
+    for (const k of Object.keys(this.cart)) if (!menu.includes(k)) delete this.cart[k];
+    const count = countItems(this.cart);
+    this.sayMe(count ? `${orderText(this.cart)} 주세요!` : '음… 뭐 먹지?');
+    const price = priceOfItems(this.cart);
     const lack = price > (net.me?.capital || 0);
     const row = (key) => `
       <div class="menu-row">
         <img src="${FISH_IMG}" alt="">
-        <div class="info"><strong><i class="filling ${key}"></i>${MENU[key].name}</strong><span>1마리 1천원 · 3마리 2천원</span></div>
+        <div class="info"><strong>${fillingIcon(key, 20)}${FILLINGS[key].name}</strong><span>1마리 ${won(FILLINGS[key].price)}</span></div>
         <div class="stepper">
-          <button data-step="${key}:-1" aria-label="${MENU[key].short} 빼기">−</button>
-          <b>${this.cart[key]}</b>
-          <button data-step="${key}:1" aria-label="${MENU[key].short} 더하기">+</button>
+          <button data-step="${key}:-1" aria-label="${FILLINGS[key].short} 빼기">−</button>
+          <b>${this.cart[key] || 0}</b>
+          <button data-step="${key}:1" aria-label="${FILLINGS[key].short} 더하기">+</button>
         </div>
       </div>`;
+    this.panel.classList.toggle('compact-menu', menu.length > 2);
     this.panel.innerHTML = `
-      ${row('red')}${row('cream')}
+      <p class="menu-deal">3마리마다 ${won(BUNDLE_DISCOUNT)} 할인</p>
+      <div class="menu-rows">${menu.map(row).join('')}</div>
       <input id="order-note" class="note-input" maxlength="30" placeholder="사장님께 한마디 (선택)" value="${escapeHtml(this.noteDraft || '')}">
       <button class="btn primary big" id="order-submit" ${count === 0 || lack ? 'disabled' : ''}>
         ${lack ? '자본이 부족해요' : count === 0 ? '메뉴를 골라 주세요' : `${count}마리 · ${won(price)} 주문하기`}
       </button>
-      <p class="panel-note">내 자본 ${won(net.me?.capital)}${Math.floor(count / 3) ? ' · 3마리 2천원 적용!' : ''}</p>`;
+      <p class="panel-note">내 자본 ${won(net.me?.capital)}${Math.floor(count / 3) ? ` · ${won(Math.floor(count / 3) * BUNDLE_DISCOUNT)} 할인 적용!` : ''}</p>`;
     this.panel.querySelectorAll('[data-step]').forEach((btn) => btn.addEventListener('click', () => {
       const [key, delta] = btn.dataset.step.split(':');
-      this.cart[key] = Math.max(0, Math.min(9, this.cart[key] + Number(delta)));
+      this.cart[key] = Math.max(0, Math.min(9, (this.cart[key] || 0) + Number(delta)));
       this.noteDraft = document.getElementById('order-note').value;
       this.renderMenu();
     }));
@@ -329,14 +340,14 @@ export class Visit {
   }
 
   async submit() {
-    const { red, cream } = this.cart;
+    const items = { ...this.cart };
     const typed = document.getElementById('order-note').value.trim();
-    const note = typed || `${orderText(red, cream)} 주세요!`;
+    const note = typed || `${orderText(items)} 주세요!`;
     document.getElementById('order-submit').disabled = true;
     try {
-      const { order } = await net.post('/api/order', { sellerId: this.ownerId, red, cream, note });
+      const { order } = await net.post('/api/order', { sellerId: this.ownerId, items, red: items.red || 0, cream: items.cream || 0, note });
       net.orders.set(order.id, order);
-      this.cart = { red: 0, cream: 0 };
+      this.cart = {};
       this.noteDraft = '';
       this.render();
     } catch (e) {
@@ -357,7 +368,7 @@ export class Visit {
     this.panel.innerHTML = `
       <div class="wait-head">
         <img src="${FISH_IMG}" alt="" class="wait-fish">
-        <div><strong>사장님이 굽고 있어요…</strong><span>${[order.red ? `팥 ${order.red}` : '', order.cream ? `슈크림 ${order.cream}` : ''].filter(Boolean).join(' · ')} · ${won(order.price)} 결제 완료</span></div>
+        <div><strong>사장님이 굽고 있어요…</strong><span>${itemsLabel(itemsOf(order))} · ${won(order.price)} 결제 완료</span></div>
       </div>
       <p class="say-label">말 걸기</p>
       <div class="quick-chips">${QUICK_MESSAGES.map((t) => `<button data-quick="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('')}<button data-act="type" class="type-chip">✏️ 직접 쓰기</button></div>
@@ -405,9 +416,9 @@ export class Visit {
     this.say('맛있게 드세요~ 또 오세요!');
     this.panel.innerHTML = `
       <div class="panel-center">
-        <div class="received">${Array.from({ length: Math.min(order.red + order.cream, 6) }, (_, i) => `<img src="${FISH_IMG}" alt="" style="animation-delay:${i * 0.08}s">`).join('')}</div>
+        <div class="received">${Array.from({ length: Math.min(countItems(itemsOf(order)), 6) }, (_, i) => `<img src="${FISH_IMG}" alt="" style="animation-delay:${i * 0.08}s">`).join('')}</div>
         <h3>붕어빵 받았어요!</h3>
-        <p>${[order.red ? `팥 ${order.red}` : '', order.cream ? `슈크림 ${order.cream}` : ''].filter(Boolean).join(' · ')} · 지금까지 먹은 붕어빵 ${net.me?.bought || 0}마리</p>
+        <p>${itemsLabel(itemsOf(order))} · 지금까지 먹은 붕어빵 ${net.me?.bought || 0}마리</p>
         <div class="row-btns">
           <button class="btn ghost" data-act="leave">나가기</button>
           <button class="btn primary" data-act="again">한 번 더 주문</button>

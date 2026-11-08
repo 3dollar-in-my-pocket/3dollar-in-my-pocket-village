@@ -1,4 +1,5 @@
 import { fishSvg, paintFish } from './art.js';
+import { FILLINGS, BASE_FILLINGS } from './economy.js';
 
 export const FISH_IMG = 'assets/cat/bungeoppang-tight.svg';
 export const MOLD_COUNT = 6;
@@ -6,17 +7,26 @@ export const MOLD_COUNT = 6;
 const COOKING = new Set(['side1', 'flip', 'side2', 'done', 'burnt']);
 
 export class GrillView {
-  constructor(container, { onTap, mirrored = false } = {}) {
+  constructor(container, { onTap, mirrored = false, count = MOLD_COUNT } = {}) {
     this.container = container;
+    this.onTap = onTap;
     this.container.classList.add('grill');
     if (mirrored) this.container.classList.add('mirrored');
     this.molds = [];
-    for (let i = 0; i < MOLD_COUNT; i++) {
-      const el = document.createElement(onTap ? 'button' : 'div');
+    this.setCount(count);
+  }
+
+  setCount(count) {
+    if (count === this.molds.length) return;
+    this.container.innerHTML = '';
+    this.container.classList.toggle('wide', count > 6);
+    this.molds = [];
+    for (let i = 0; i < count; i++) {
+      const el = document.createElement(this.onTap ? 'button' : 'div');
       el.className = 'mold phase-empty';
-      if (onTap) {
+      if (this.onTap) {
         el.setAttribute('aria-label', `붕어빵 틀 ${i + 1}`);
-        el.addEventListener('click', () => onTap(i));
+        el.addEventListener('click', () => this.onTap(i));
       }
       el.innerHTML = `
         <div class="cavity">${fishSvg()}</div>
@@ -29,7 +39,7 @@ export class GrillView {
         <span class="tag"></span>`;
       this.molds.push({ el, fish: el.querySelector('.fish'), wrap: el.querySelector('.fish-wrap'), tag: el.querySelector('.tag'), blob: el.querySelector('.blob'), phase: 'empty', d: -1, filling: null });
     }
-    this.molds.forEach((m) => container.appendChild(m.el));
+    this.molds.forEach((m) => this.container.appendChild(m.el));
   }
 
   render(states) {
@@ -43,8 +53,9 @@ export class GrillView {
         if ((m.phase === 'flip' || m.phase === 'side1') && phase === 'side2') this.flip(m);
         if (m.phase === 'side2' && phase === 'done') this.ding(m);
         m.el.className = `mold phase-${phase}${filling ? ` filling-${filling}` : ''}${COOKING.has(phase) ? ' cooking' : ''}`;
-        m.tag.textContent = filling === 'red' ? '팥' : filling === 'cream' ? '슈크림' : '';
+        m.tag.textContent = FILLINGS[filling]?.short || '';
         m.blob.className = `blob ${filling || ''}`;
+        m.blob.style.setProperty('--fill', FILLINGS[filling]?.dot || '');
         m.phase = phase;
         m.filling = filling;
         m.d = -1;
@@ -97,20 +108,28 @@ const POSITIONS = (() => {
 })();
 
 export class TrayView {
-  constructor(container) {
+  constructor(container, kinds = BASE_FILLINGS) {
     this.container = container;
     container.classList.add('rack');
-    container.innerHTML = `
-      <div class="rack-zone" data-kind="red"><span class="rack-sign red">팥</span><div class="rack-fish"></div><b class="rack-count">0</b></div>
-      <div class="rack-zone" data-kind="cream"><span class="rack-sign cream">슈크림</span><div class="rack-fish"></div><b class="rack-count">0</b></div>`;
+    this.kinds = [];
+    this.setKinds(kinds);
+  }
+
+  setKinds(kinds) {
+    if (kinds.join() === this.kinds.join()) return;
+    this.kinds = [...kinds];
+    this.container.style.setProperty('--zones', kinds.length);
+    this.container.classList.toggle('many', kinds.length > 2);
+    this.container.innerHTML = kinds.map((k) => `
+      <div class="rack-zone" data-kind="${k}"><span class="rack-sign ${k}" style="color:${FILLINGS[k].label}">${FILLINGS[k].short}</span><div class="rack-fish"></div><b class="rack-count">0</b></div>`).join('');
     this.zones = {};
-    container.querySelectorAll('.rack-zone').forEach((z) => {
+    this.container.querySelectorAll('.rack-zone').forEach((z) => {
       this.zones[z.dataset.kind] = { el: z, fish: z.querySelector('.rack-fish'), count: z.querySelector('.rack-count'), n: -1 };
     });
   }
 
   render(tray, changed) {
-    for (const kind of ['red', 'cream']) {
+    for (const kind of this.kinds) {
       const z = this.zones[kind];
       const n = Math.max(0, tray?.[kind] || 0);
       if (n !== z.n) {
@@ -140,6 +159,6 @@ export class TrayView {
   }
 
   rect(kind) {
-    return this.zones[kind].el.getBoundingClientRect();
+    return (this.zones[kind]?.el || this.container).getBoundingClientRect();
   }
 }
