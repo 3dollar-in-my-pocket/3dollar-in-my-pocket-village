@@ -1,7 +1,8 @@
 import { net } from './net.js';
-import { MENU, priceOf, won, escapeHtml } from './data.js';
+import { won, escapeHtml } from './data.js';
+import { FILLINGS, normalizeUpgrades, moldCount, trayCap, cookScale, signBoost, itemsOf, countItems, priceOfItems } from './economy.js';
 import { portrait, presetPortrait, randomPerson } from './people.js';
-import { kettleSvg, containerSvg, npcOrderMessage, SELLER_REPLIES } from './art.js';
+import { kettleSvg, containerSvg, npcOrderMessage, SELLER_REPLIES, fillingIcon } from './art.js';
 import { GrillView, TrayView, FISH_IMG, MOLD_COUNT } from './stall-ui.js';
 
 const FILL_DELAY = 0.5;
@@ -9,7 +10,6 @@ const SIDE1 = 3.5;
 const FLIP_WINDOW = 4.5;
 const SIDE2 = 3.5;
 const DONE_WINDOW = 7;
-const MAX_TRAY = 12;
 const MAX_WALKINS = 3;
 const NPC_TAGS = ['동네 손님', '학생 손님', '퇴근길 손님', '산책 손님', '단골 손님', '꼬마 손님'];
 
@@ -39,12 +39,7 @@ export class Shop {
     this.grill = new GrillView(document.getElementById('grill'), { onTap: (i) => this.tapMold(i) });
     this.trayView = new TrayView(document.getElementById('tray'));
 
-    const tools = document.getElementById('tools');
-    tools.innerHTML = `
-      <button class="tool kettle" data-tool="batter" aria-label="반죽 주전자">${kettleSvg()}<span class="tool-name">반죽</span></button>
-      <button class="tool tub" data-tool="red" aria-label="팥 통">${containerSvg('red')}<span class="tool-name">팥</span></button>
-      <button class="tool tub" data-tool="cream" aria-label="슈크림 통">${containerSvg('cream')}<span class="tool-name">슈크림</span></button>`;
-    tools.querySelectorAll('.tool').forEach((btn) => btn.addEventListener('click', () => this.setTool(btn.dataset.tool)));
+    this.menu = [];
     document.getElementById('shop-close').addEventListener('click', () => this.close());
 
     net.on('order', (o) => this.onOrder(o));
@@ -59,7 +54,17 @@ export class Shop {
   open() {
     const me = net.me;
     this.active = true;
-    this.tray = { red: 0, cream: 0 };
+    // 장비·속재료는 장사를 시작할 때 적용
+    const u = normalizeUpgrades(net.features?.shop ? me.upgrades : null);
+    this.cook = cookScale(u);
+    this.boost = signBoost(u);
+    this.trayCap = trayCap(u);
+    this.buildTools(u.fillings);
+    const count = moldCount(u);
+    this.molds = Array.from({ length: count }, () => ({ phase: 'empty', filling: null, d: 0, t: 0 }));
+    this.grill.setCount(count);
+    this.trayView.setKinds(this.menu);
+    this.tray = Object.fromEntries(this.menu.map((k) => [k, 0]));
     this.stats = { sold: 0, revenue: 0 };
     this.customers.forEach((c) => c.el.remove());
     this.customers = [];
@@ -100,6 +105,17 @@ export class Shop {
     this.onClose?.({ ...this.stats });
   }
 
+  buildTools(menu) {
+    if (menu.join() === this.menu.join()) return;
+    this.menu = [...menu];
+    const tools = document.getElementById('tools');
+    tools.style.setProperty('--tubs', menu.length);
+    tools.innerHTML = `
+      <button class="tool kettle" data-tool="batter" aria-label="반죽 주전자">${kettleSvg()}<span class="tool-name">반죽</span></button>
+      ${menu.map((k) => `<button class="tool tub" data-tool="${k}" aria-label="${FILLINGS[k].short} 통">${containerSvg(k)}<span class="tool-name">${FILLINGS[k].short}</span></button>`).join('')}`;
+    tools.querySelectorAll('.tool').forEach((btn) => btn.addEventListener('click', () => this.setTool(btn.dataset.tool)));
+  }
+
   setTool(tool) {
     this.tool = tool;
     document.querySelectorAll('#tools .tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
@@ -116,10 +132,10 @@ export class Shop {
         if (this.tool !== 'batter') return nudge('주전자로 반죽을 먼저 부어 주세요');
         this.pourEffect(i, 'batter');
         Object.assign(m, { phase: 'batter', d: 0, t: 0, hot: false });
-        if (this.molds.every((x) => x.phase !== 'empty')) this.setTool(this.lastFilling || 'red');
+        if (this.molds.every((x) => x.phase !== 'empty')) this.setTool(this.menu.includes(this.lastFilling) ? this.lastFilling : this.menu[0]);
         break;
       case 'batter':
-        if (this.tool === 'batter') return nudge('팥이나 슈크림을 골라 넣어 주세요');
+        if (this.tool === 'batter') return nudge('속재료 통을 골라 넣어 주세요');
         this.pourEffect(i, this.tool);
         Object.assign(m, { phase: 'filled', filling: this.tool, t: 0, d: 0 });
         this.lastFilling = this.tool;
@@ -132,9 +148,9 @@ export class Shop {
         Object.assign(m, { phase: 'side2', t: 0, under: 0.95 + (m.t / FLIP_WINDOW) * 0.5 });
         break;
       case 'done': {
-        if (this.tray[m.filling] >= MAX_TRAY) return nudge('보관대가 가득 찼어요');
+        if ((this.tray[m.filling] || 0) >= this.trayCap) return nudge('보관대가 가득 찼어요');
         this.flyToTray(i, m.filling);
-        this.tray[m.filling]++;
+        this.tray[m.filling] = (this.tray[m.filling] || 0) + 1;
         this.trayView.render(this.tray, m.filling);
         Object.assign(m, { phase: 'empty', filling: null, d: 0, t: 0, hot: false });
         this.refreshReady();
@@ -157,11 +173,11 @@ export class Shop {
       if (m.phase === 'empty' || m.phase === 'batter' || m.phase === 'burnt') continue;
       m.t += dt;
       if (m.phase === 'filled') {
-        if (m.t >= FILL_DELAY) Object.assign(m, { phase: 'side1', t: 0, d: 0 });
+        if (m.t >= FILL_DELAY * this.cook) Object.assign(m, { phase: 'side1', t: 0, d: 0 });
       } else if (m.phase === 'side1') {
-        m.d = (m.t / SIDE1) * 0.35;
+        m.d = (m.t / (SIDE1 * this.cook)) * 0.35;
         m.hot = false;
-        if (m.t >= SIDE1) Object.assign(m, { phase: 'flip', t: 0, d: 0.35 });
+        if (m.t >= SIDE1 * this.cook) Object.assign(m, { phase: 'flip', t: 0, d: 0.35 });
       } else if (m.phase === 'flip') {
         m.d = 0.35 + (m.t / FLIP_WINDOW) * 0.15;
         m.hot = m.t > FLIP_WINDOW * 0.65;
@@ -170,9 +186,9 @@ export class Shop {
           burnt = true;
         }
       } else if (m.phase === 'side2') {
-        m.d = m.under + Math.min(1, m.t / SIDE2) * 0.05;
+        m.d = m.under + Math.min(1, m.t / (SIDE2 * this.cook)) * 0.05;
         m.hot = false;
-        if (m.t >= SIDE2) {
+        if (m.t >= SIDE2 * this.cook) {
           Object.assign(m, { phase: 'done', t: 0, top: m.d });
           this.hint('짠! 다 익었어요. 탭해서 보관대로 옮기세요', true);
         }
@@ -193,7 +209,7 @@ export class Shop {
       this.nextSpawn -= dt;
       if (this.nextSpawn <= 0) {
         this.addNpcCustomer();
-        this.nextSpawn = 2.5 + Math.random() * 4;
+        this.nextSpawn = (2.5 + Math.random() * 4) / this.boost;
       }
     }
 
@@ -290,8 +306,8 @@ export class Shop {
     if (phases.includes('flip')) text = '아랫면이 익었어요! 빨리 뒤집을수록 황금빛이에요';
     else if (phases.includes('done')) text = '다 익었어요! 탭해서 보관대로 옮기기';
     else if (phases.includes('burnt')) text = '탄 붕어빵은 탭해서 버려요';
-    else if (phases.includes('batter')) text = '팥·슈크림 통을 골라 반죽 위를 탭하세요';
-    else if (this.tray.red + this.tray.cream > 0 && this.customers.length) text = '손님을 탭해서 붕어빵을 건네세요';
+    else if (phases.includes('batter')) text = '속재료 통을 골라 반죽 위를 탭하세요';
+    else if (countItems(this.tray) > 0 && this.customers.length) text = '손님을 탭해서 붕어빵을 건네세요';
     else if (phases.every((p) => p === 'empty')) text = '주전자를 골라 빈 틀을 탭해 반죽을 부어요';
     else text = '굽는 중… 노릇해지면 뒤집어요';
     if (this.hintEl.textContent !== text) this.hintEl.textContent = text;
@@ -300,22 +316,20 @@ export class Shop {
   addNpcCustomer() {
     const r = Math.random();
     const count = r < 0.3 ? 1 : r < 0.6 ? 2 : r < 0.92 ? 3 : 4;
-    let red = 0;
-    let cream = 0;
-    const mostlyOne = Math.random() < 0.5 ? 'red' : 'cream';
+    const items = {};
+    const favorite = pick(this.menu);
     for (let i = 0; i < count; i++) {
-      if (Math.random() < 0.7 ? mostlyOne === 'red' : mostlyOne !== 'red') red++;
-      else cream++;
+      const k = Math.random() < 0.7 ? favorite : pick(this.menu);
+      items[k] = (items[k] || 0) + 1;
     }
-    const maxPatience = 26 + Math.random() * 14;
+    const maxPatience = (26 + Math.random() * 14) * this.boost;
     this.addCustomer({
       kind: 'npc',
       tag: pick(NPC_TAGS),
       face: portrait(randomPerson(Math.floor(Math.random() * 400)), { size: 180 }),
-      message: npcOrderMessage(red, cream),
-      red,
-      cream,
-      price: priceOf(count),
+      message: npcOrderMessage(items),
+      items,
+      price: priceOfItems(items),
       patience: maxPatience,
       maxPatience,
     });
@@ -330,8 +344,7 @@ export class Shop {
       name: order.buyerName,
       face: presetPortrait(order.buyerCharacter, { size: 180 }),
       message: order.note || '붕어빵 주세요!',
-      red: order.red,
-      cream: order.cream,
+      items: itemsOf(order),
       price: order.price,
       orderId: order.id,
       buyerId: order.buyerId,
@@ -433,9 +446,9 @@ export class Shop {
   addCustomer(c) {
     const el = document.createElement('div');
     el.className = `customer ${c.kind}`;
-    const chips = [];
-    if (c.red) chips.push(`<span class="chip-item"><img src="${FISH_IMG}" alt=""><i class="filling red"></i>팥 ×${c.red}</span>`);
-    if (c.cream) chips.push(`<span class="chip-item"><img src="${FISH_IMG}" alt=""><i class="filling cream"></i>슈크림 ×${c.cream}</span>`);
+    const chips = Object.entries(c.items)
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => `<span class="chip-item"><img src="${FISH_IMG}" alt="">${fillingIcon(k, 14)}${FILLINGS[k]?.short} ×${n}</span>`);
     el.innerHTML = `
       <button class="order-bubble">
         <p class="order-msg">"${escapeHtml(c.message)}"</p>
@@ -481,14 +494,13 @@ export class Shop {
   refreshReady() {
     for (const c of this.customers) {
       if (!c.readyEl || c.serving) continue;
-      const lackRed = Math.max(0, c.red - this.tray.red);
-      const lackCream = Math.max(0, c.cream - this.tray.cream);
-      const ready = !lackRed && !lackCream;
+      const lack = Object.entries(c.items).map(([k, n]) => [k, Math.max(0, n - (this.tray[k] || 0))]).filter(([, n]) => n > 0);
+      const ready = !lack.length;
       c.el.classList.toggle('ready', ready);
       c.readyEl.className = `ready-badge ${ready ? 'ok' : 'lack'}`;
       c.readyEl.textContent = ready
         ? '✓ 전달 가능'
-        : `${[lackRed ? `팥 ${lackRed}` : '', lackCream ? `슈 ${lackCream}` : ''].filter(Boolean).join('·')} 부족`;
+        : `${lack.map(([k, n]) => `${FILLINGS[k]?.short} ${n}`).join('·')} 부족`;
     }
   }
 
@@ -502,9 +514,9 @@ export class Shop {
 
   async serve(c) {
     if (c.leaving || c.serving) return;
-    const missing = [];
-    if (this.tray.red < c.red) missing.push(`팥 ${c.red - this.tray.red}마리`);
-    if (this.tray.cream < c.cream) missing.push(`슈크림 ${c.cream - this.tray.cream}마리`);
+    const missing = Object.entries(c.items)
+      .filter(([k, n]) => (this.tray[k] || 0) < n)
+      .map(([k, n]) => `${FILLINGS[k]?.short} ${n - (this.tray[k] || 0)}마리`);
     if (missing.length) {
       c.el.classList.remove('shake');
       void c.el.offsetWidth;
@@ -513,8 +525,7 @@ export class Shop {
       return;
     }
     c.serving = true;
-    this.tray.red -= c.red;
-    this.tray.cream -= c.cream;
+    for (const [k, n] of Object.entries(c.items)) this.tray[k] -= n;
     this.trayView.render(this.tray);
     c.el.classList.remove('ready');
     c.readyEl.className = 'ready-badge ok';
@@ -522,17 +533,16 @@ export class Shop {
     this.refreshReady();
     const rect = c.el.getBoundingClientRect();
     try {
-      if (c.kind === 'npc') await net.post('/api/sale', { red: c.red, cream: c.cream });
+      if (c.kind === 'npc') await net.post('/api/sale', { items: c.items });
       else await net.post('/api/order/fulfill', { orderId: c.orderId });
-      this.stats.sold += c.red + c.cream;
+      this.stats.sold += countItems(c.items);
       this.stats.revenue += c.price;
       this.renderStats();
       this.moneyPop(rect, `+${won(c.price)}`);
       c.msgEl.textContent = pick(['"감사합니다~"', '"잘 먹을게요!"', '"와 따끈하다!"']);
       setTimeout(() => this.removeCustomer(c), 350);
     } catch (e) {
-      this.tray.red += c.red;
-      this.tray.cream += c.cream;
+      for (const [k, n] of Object.entries(c.items)) this.tray[k] += n;
       this.trayView.render(this.tray);
       c.serving = false;
       this.refreshReady();
@@ -576,4 +586,3 @@ export class Shop {
   }
 }
 
-export { MENU };

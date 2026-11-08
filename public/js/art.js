@@ -1,3 +1,4 @@
+import { FILLINGS, FILLING_KEYS } from './economy.js';
 export const ICONS = {
   bungeoppang: 'assets/cat/bungeoppang.svg',
   gyeranppang: 'assets/cat/gyeranppang.svg',
@@ -89,13 +90,18 @@ export function kettleSvg() {
 export function containerSvg(kind) {
   const uid = `${kind}${++svgSeq}`;
   const red = kind === 'red';
-  const base = red ? '#55191A' : '#F4C63F';
-  const top = red ? '#7A2A2A' : '#FFE07A';
-  const label = red ? '팥' : '슈크림';
-  const labelColor = red ? '#6B2E2E' : '#B57F00';
-  const texture = red
-    ? '<ellipse cx="34" cy="36" rx="3.2" ry="2.2" fill="#3A0F10"/><ellipse cx="46" cy="40" rx="3" ry="2" fill="#8E3B3B"/><ellipse cx="58" cy="35" rx="3.4" ry="2.3" fill="#3A0F10"/><ellipse cx="80" cy="39" rx="3" ry="2" fill="#3A0F10"/><ellipse cx="90" cy="35" rx="2.6" ry="1.8" fill="#8E3B3B"/><ellipse cx="28" cy="41" rx="2.4" ry="1.6" fill="#8E3B3B"/><ellipse cx="52" cy="35" rx="4" ry="1.2" fill="#B86B6B" opacity=".7"/>'
-    : '<path d="M24 38 C34 32 44 42 54 36 C62 31 72 40 82 35 C88 32 94 36 96 35" fill="none" stroke="#FFF6C8" stroke-width="3" stroke-linecap="round"/><path d="M30 42 C40 38 50 44 60 40" fill="none" stroke="#E2AE2C" stroke-width="2" stroke-linecap="round" opacity=".7"/>';
+  const f = FILLINGS[kind] || FILLINGS.cream;
+  const { base, top } = f;
+  const label = f.short;
+  const labelColor = f.label;
+  const textures = {
+    red: '<ellipse cx="34" cy="36" rx="3.2" ry="2.2" fill="#3A0F10"/><ellipse cx="46" cy="40" rx="3" ry="2" fill="#8E3B3B"/><ellipse cx="58" cy="35" rx="3.4" ry="2.3" fill="#3A0F10"/><ellipse cx="80" cy="39" rx="3" ry="2" fill="#3A0F10"/><ellipse cx="90" cy="35" rx="2.6" ry="1.8" fill="#8E3B3B"/><ellipse cx="28" cy="41" rx="2.4" ry="1.6" fill="#8E3B3B"/><ellipse cx="52" cy="35" rx="4" ry="1.2" fill="#B86B6B" opacity=".7"/>',
+    cream: '<path d="M24 38 C34 32 44 42 54 36 C62 31 72 40 82 35 C88 32 94 36 96 35" fill="none" stroke="#FFF6C8" stroke-width="3" stroke-linecap="round"/><path d="M30 42 C40 38 50 44 60 40" fill="none" stroke="#E2AE2C" stroke-width="2" stroke-linecap="round" opacity=".7"/>',
+    sweetpotato: '<ellipse cx="32" cy="37" rx="5" ry="2.6" fill="#F8C77E"/><ellipse cx="52" cy="40" rx="4" ry="2.2" fill="#B8601C"/><ellipse cx="66" cy="35" rx="5" ry="2.4" fill="#F8C77E"/><ellipse cx="88" cy="38" rx="4" ry="2.2" fill="#B8601C"/>',
+    choco: '<path d="M24 37 C36 32 46 41 58 36 C68 32 80 40 96 35" fill="none" stroke="#8A5A3C" stroke-width="3" stroke-linecap="round"/><ellipse cx="40" cy="40" rx="2.6" ry="1.6" fill="#2A160C"/><ellipse cx="80" cy="36" rx="2.6" ry="1.6" fill="#2A160C"/>',
+    pizza: '<circle cx="32" cy="37" r="3.6" fill="#B0251A"/><circle cx="56" cy="39" r="3.4" fill="#B0251A"/><circle cx="84" cy="36" r="3.6" fill="#B0251A"/><path d="M40 35 l6 2 M64 34 l6 3 M72 40 l5 -1" stroke="#3E8E3A" stroke-width="2" stroke-linecap="round"/>',
+  };
+  const texture = textures[kind] || textures.cream;
   return `
 <svg viewBox="0 0 120 104" xmlns="http://www.w3.org/2000/svg" class="tool-art tub-art">
   <defs>
@@ -117,7 +123,7 @@ export function containerSvg(kind) {
   <path d="M76 35 L108 6" stroke="url(#tub-spoon-${uid})" stroke-width="5.5" stroke-linecap="round"/>
   <path d="M84 26 L104 8" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" opacity=".9"/>
   <rect x="34" y="58" width="52" height="26" rx="5" fill="#FFF7DC" stroke="#E2CF9E" stroke-width="1.5" transform="rotate(-3 60 71)"/>
-  <text x="60" y="76" text-anchor="middle" font-family="Pretendard, sans-serif" font-weight="700" font-size="${red ? 16 : 12}" fill="${labelColor}" transform="rotate(-3 60 71)">${label}</text>
+  <text x="60" y="76" text-anchor="middle" font-family="Pretendard, sans-serif" font-weight="700" font-size="${label.length <= 1 ? 16 : label.length === 2 ? 14 : 12}" fill="${labelColor}" transform="rotate(-3 60 71)">${label}</text>
   <path d="M24 46 L28 92" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" opacity=".8"/>
 </svg>`;
 }
@@ -133,20 +139,73 @@ export const ORDER_LINES = {
   ],
 };
 
-export function orderText(red, cream) {
-  const parts = [];
-  if (red) parts.push(`팥 ${red}개`);
-  if (cream) parts.push(`슈크림 ${cream}개`);
-  if (red && cream) return `${parts[0]}랑 ${parts[1]}`;
-  if (red + cream >= 3) return `${red ? '팥' : '슈크림'}으로 ${red + cream}마리`;
-  return parts[0];
+// 받침 있으면 '으로', 없으면 '로'
+const ro = (word) => {
+  const c = word.charCodeAt(word.length - 1) - 0xac00;
+  return c >= 0 && c <= 11171 && c % 28 ? '으로' : '로';
+};
+
+export function orderText(items) {
+  const keys = FILLING_KEYS.filter((k) => items?.[k] > 0);
+  if (!keys.length) return '';
+  const total = keys.reduce((s, k) => s + items[k], 0);
+  if (keys.length === 1) {
+    const name = FILLINGS[keys[0]].short;
+    return total >= 3 ? `${name}${ro(name)} ${total}마리` : `${name} ${total}개`;
+  }
+  const parts = keys.map((k) => `${FILLINGS[k].short} ${items[k]}개`);
+  return parts.length === 2 ? `${parts[0]}랑 ${parts[1]}` : parts.join(', ');
 }
 
-export function npcOrderMessage(red, cream) {
+export function npcOrderMessage(items) {
   const lines = ORDER_LINES.npc;
   const make = lines[Math.floor(Math.random() * lines.length)];
-  return make({ text: orderText(red, cream) });
+  return make({ text: orderText(items) });
 }
 
 export const QUICK_MESSAGES = ['맛있게 부탁해요!', '천천히 하셔도 돼요', '바삭하게 해주세요', '추워요 🥶', '냄새 너무 좋아요', '단골 될게요!'];
 export const SELLER_REPLIES = ['금방 드릴게요!', '감사합니다 😊', '조금만 기다려요~', '바삭하게 구울게요!'];
+
+// 속재료 아이콘 (실제 재료 모양). size는 px
+export function fillingIcon(key, size = 24) {
+  const id = `fi${++svgSeq}`;
+  const art = {
+    red: `
+      <ellipse cx="24" cy="38" rx="18" ry="5" fill="#000" opacity=".12"/>
+      <ellipse cx="17" cy="30" rx="7" ry="5.2" transform="rotate(-20 17 30)" fill="#6B1F22"/>
+      <ellipse cx="30" cy="31" rx="7" ry="5.2" transform="rotate(15 30 31)" fill="#5A181B"/>
+      <ellipse cx="23" cy="22" rx="7" ry="5.2" transform="rotate(5 23 22)" fill="#7A2A2D"/>
+      <ellipse cx="34" cy="21" rx="6" ry="4.6" transform="rotate(-30 34 21)" fill="#651C1F"/>
+      <ellipse cx="13" cy="20" rx="6" ry="4.6" transform="rotate(25 13 20)" fill="#5A181B"/>
+      <path d="M14 29 q3 -2 6 0 M27 30 q3 -2 6 0 M20 21 q3 -2 6 0 M31 20 q2 -2 5 -1 M10 19 q2 -2 5 0" stroke="#F3D3D3" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".8"/>`,
+    cream: `
+      <ellipse cx="24" cy="40" rx="17" ry="4.5" fill="#000" opacity=".12"/>
+      <path d="M8 36 C8 29 14 28 16 28 C14 22 19 18 24 19 C24 13 30 11 31 7 C35 12 34 17 31 20 C36 20 39 25 36 29 C40 30 41 36 38 38 Z" fill="url(#${id}c)" stroke="#D99A1A" stroke-width="1.6" stroke-linejoin="round"/>
+      <path d="M14 33 C20 31 28 31 34 33 M18 26 C22 24.5 27 24.5 30 26" stroke="#FFF3C4" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <defs><linearGradient id="${id}c" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE9A0"/><stop offset="1" stop-color="#F4C63F"/></linearGradient></defs>`,
+    sweetpotato: `
+      <ellipse cx="24" cy="40" rx="18" ry="4" fill="#000" opacity=".12"/>
+      <path d="M6 28 C6 18 18 12 30 14 C40 16 44 24 42 30 C40 37 28 40 18 38 C10 37 6 33 6 28 Z" fill="#9C3D5C" stroke="#6E2440" stroke-width="1.6"/>
+      <ellipse cx="38" cy="25" rx="5.5" ry="8.5" transform="rotate(20 38 25)" fill="#F8C35C" stroke="#E09A2A" stroke-width="1.4"/>
+      <ellipse cx="38" cy="25" rx="2.4" ry="4.2" transform="rotate(20 38 25)" fill="#FBD98A"/>
+      <path d="M12 24 q4 -2 8 -1 M15 32 q5 1 9 0 M22 19 q3 -1 6 0" stroke="#C26583" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+      <path d="M6 28 q-3 1 -4 4" stroke="#6E2440" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
+    choco: `
+      <ellipse cx="24" cy="41" rx="16" ry="3.5" fill="#000" opacity=".12"/>
+      <g transform="rotate(-12 24 24)">
+        <rect x="9" y="8" width="30" height="32" rx="3" fill="#5A3422" stroke="#3A1E12" stroke-width="1.6"/>
+        <path d="M19 8 V40 M29 8 V40 M9 18.7 H39 M9 29.3 H39" stroke="#3A1E12" stroke-width="1.6"/>
+        <path d="M11 10 h6 M21 10 h6 M31 10 h6 M11 20.5 h6 M21 20.5 h6 M31 20.5 h6" stroke="#8A5A3C" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M9 30 H39 V38 Q39 40 37 40 H11 Q9 40 9 38 Z" fill="#C9302C"/>
+        <path d="M9 30 L14 33 L19 30 L24 33 L29 30 L34 33 L39 30" fill="none" stroke="#E8E2D8" stroke-width="1.6"/>
+      </g>`,
+    pizza: `
+      <ellipse cx="24" cy="41" rx="15" ry="3.5" fill="#000" opacity=".12"/>
+      <path d="M24 42 L7 12 Q24 4 41 12 Z" fill="#F7C948" stroke="#D99A1A" stroke-width="1.6" stroke-linejoin="round"/>
+      <path d="M7 12 Q24 4 41 12 L39 16 Q24 9 9 16 Z" fill="#D9893A" stroke="#B5682A" stroke-width="1.4" stroke-linejoin="round"/>
+      <circle cx="19" cy="21" r="3.6" fill="#C0392B"/><circle cx="29" cy="22" r="3.4" fill="#C0392B"/><circle cx="24" cy="31" r="3.2" fill="#C0392B"/>
+      <path d="M15 27 l3 1 M31 29 l2 -2 M22 17 l3 0" stroke="#3E8E3A" stroke-width="2" stroke-linecap="round"/>`,
+  }[key];
+  if (!art) return '';
+  return `<svg class="filling-icon" viewBox="0 0 48 48" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${art}</svg>`;
+}

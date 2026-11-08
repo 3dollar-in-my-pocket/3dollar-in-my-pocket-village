@@ -9,6 +9,8 @@ export const PRESETS = [
   { key: 'earmuff', name: '귀마개', skin: '#F9E0C7', hair: '#6B4430', hat: 'earmuff', hatColor: '#FF9EAE', coat: '#FFD9DF', pants: '#6E6A80', scarf: '#FF8181' },
 ];
 
+export const SHOPKEEPER = { key: 'shopkeeper', name: '상회 사장님', skin: '#EEC39A', hair: '#B8B1A8', hat: 'cap', hatColor: '#2F6E5A', coat: '#F3EEE4', sleeves: '#3D6B66', apron: '#3D6B66', pants: '#4A4A58', gloves: null, scarf: null };
+
 export const presetOf = (key) => PRESETS.find((p) => p.key === key) || PRESETS[0];
 
 const SKINS = ['#F6D7B8', '#EEC39A', '#E0AC80', '#F9E0C7', '#D9A273'];
