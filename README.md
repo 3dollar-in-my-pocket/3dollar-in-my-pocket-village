@@ -42,6 +42,7 @@ npm run db:migrate:dev && npm run deploy:dev   # dev 배포
 npm run db:migrate:prod && npm run deploy:prod # production 배포
 ```
 
+- production은 GitHub 릴리즈를 발행하면 자동 배포됩니다(`.github/workflows/deploy-production.yml`: D1 마이그레이션 → 배포). 저장소 시크릿 `CLOUDFLARE_API_TOKEN`(Workers 스크립트 편집 + D1 편집 권한)이 필요하고, 없으면 배포 단계를 건너뜁니다
 - 로컬은 토큰 없이 열면 **개발용 입장** 폼이 뜹니다 (`/dev-login?name=이름`, 로컬 전용)
 - 여러 유저 테스트: `localhost`, `127.0.0.1`, `team.localhost`는 쿠키가 따로라 각각 다른 유저
 - 대기열 테스트: `npx wrangler dev --var VILLAGE_CAPACITY:2`
