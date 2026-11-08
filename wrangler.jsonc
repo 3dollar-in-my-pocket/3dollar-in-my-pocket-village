@@ -29,7 +29,8 @@
     "BOTS": "1",
     "AUTH_MODE": "hybrid",
     "DEV_AUTH": "1",
-    "FEATURE_THUMBS": "1"
+    "FEATURE_THUMBS": "1",
+    "FEATURE_SHOP": "1"
   },
   "env": {
     "dev": {
@@ -40,7 +41,8 @@
         "BOTS": "1",
         "AUTH_MODE": "hybrid",
         "DEV_AUTH": "0",
-        "FEATURE_THUMBS": "1"
+        "FEATURE_THUMBS": "1",
+        "FEATURE_SHOP": "1"
       },
       "durable_objects": {
         "bindings": [{ "name": "VILLAGE", "class_name": "Village" }]
@@ -62,7 +64,8 @@
         "BOTS": "0",
         "AUTH_MODE": "hybrid",
         "DEV_AUTH": "0",
-        "FEATURE_THUMBS": "1"
+        "FEATURE_THUMBS": "1",
+        "FEATURE_SHOP": "0"
       },
       "durable_objects": {
         "bindings": [{ "name": "VILLAGE", "class_name": "Village" }]

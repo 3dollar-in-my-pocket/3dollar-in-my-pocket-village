@@ -127,7 +127,7 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 .banner-actions .btn { flex: 1; }
 
 /* ---------- Shared stall screens ---------- */
-#shop, #visit { display: flex; flex-direction: column; padding-top: var(--safe-top); z-index: 5; }
+#shop, #visit, #store { display: flex; flex-direction: column; padding-top: var(--safe-top); z-index: 5; }
 .shop-top { position: relative; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
 .shop-title { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
 .shop-title strong { font-size: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -424,7 +424,7 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 @keyframes toastOut { to { transform: translateY(-10px); opacity: 0; } }
 
 @media (min-width: 700px) {
-  #shop, #visit { max-width: 520px; margin: 0 auto; }
+  #shop, #visit, #store { max-width: 520px; margin: 0 auto; }
   .hud-bottom { max-width: 480px; margin: 0 auto; }
 }
 
@@ -580,3 +580,68 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
   margin: 0 0 6px; padding: 6px 10px; border-radius: 14px; background: #fff; color: var(--pink); font-size: 13px; font-weight: 800;
   box-shadow: 0 0 0 2px var(--pink), 0 4px 10px rgba(0, 0, 0, 0.2); animation: bubblePop 0.3s ease; white-space: nowrap;
 }
+
+/* ---------- 상점: 장비·속재료 ---------- */
+.grill.wide { grid-template-columns: repeat(4, 1fr); }
+.mold .blob:not(.red):not(.cream) { background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.35), var(--fill, var(--custard)) 60%); }
+.rack.many { grid-template-columns: repeat(var(--zones), 1fr); gap: 4px; }
+.rack.many .rack-fish img { width: 48%; }
+.rack.many .rack-sign { font-size: 9px; padding: 3px 3px; }
+.counter.front .rack.many { grid-template-columns: 1fr 1fr; gap: 3px; padding: 4px; }
+.counter.front .rack.many .rack-fish { inset: 0 0 0 0; }
+.counter.front .rack.many .rack-fish img { width: 30%; }
+.counter.front .rack.many .rack-sign { font-size: 8px; padding: 0 3px; }
+.counter.front .rack.many .rack-count { right: 2px; bottom: 2px; min-width: 16px; height: 14px; font-size: 9px; }
+.counter.front .rack.many .rack-zone.empty::after { font-size: 9px; }
+.tools { grid-template-columns: 1.15fr repeat(var(--tubs, 2), 1fr); }
+.tools .tool .tool-name { padding: 2px 6px; white-space: nowrap; }
+
+.visit-panel .menu-deal { margin: 0 0 6px; font-size: 12px; font-weight: 700; color: var(--pink); text-align: right; }
+.visit-panel.compact-menu .menu-rows { max-height: 150px; overflow-y: auto; margin: 0 -4px 6px; padding: 0 4px; }
+.visit-panel.compact-menu .menu-row { padding: 4px 8px; margin-bottom: 5px; }
+.visit-panel.compact-menu .menu-row > img { width: 34px; }
+.visit-panel.compact-menu .stepper button { width: 30px; height: 30px; }
+
+.store-tabs { display: flex; gap: 6px; margin: 12px 0 8px; }
+.store-tabs button { flex: 1; height: 38px; border-radius: 12px; border: 0; background: rgba(42, 33, 28, 0.06); font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+.store-tabs button.on { background: var(--pink); color: #fff; }
+.store-list { display: flex; flex-direction: column; gap: 8px; }
+.store-row { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 16px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06); }
+.store-row.owned { opacity: 0.75; }
+.store-icon { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 12px; background: var(--pink-soft); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+.store-dot { flex: 0 0 auto; width: 26px; height: 26px; margin: 0 7px; border-radius: 50%; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18); }
+.store-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.store-info strong { font-size: 15px; }
+.store-lv { margin-left: 2px; font-size: 12px; color: var(--pink); }
+.store-pips { display: flex; gap: 3px; }
+.store-pips i { width: 14px; height: 5px; border-radius: 3px; background: rgba(42, 33, 28, 0.12); }
+.store-pips i.on { background: var(--pink); }
+.store-effect { font-size: 12px; color: var(--ink-soft); word-break: keep-all; }
+.store-effect b { color: var(--ink); }
+.store-buy { flex: 0 0 auto; min-width: 84px; }
+.store-max { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.store-note { margin: 10px 0 0; font-size: 12px; color: var(--ink-soft); text-align: center; }
+.rack.many .rack-zone.empty::after { content: none; }
+
+/* ---------- 붕어상회 (마을 상점) ---------- */
+.filling-icon { flex: 0 0 auto; display: inline-block; vertical-align: middle; }
+.chip-item .filling-icon { margin: 0 1px; }
+.label.store { font-size: 12px; padding: 5px 9px 5px 8px; border-radius: 10px; display: flex; align-items: center; gap: 5px; background: #fff; outline: 2px solid #2F6E5A; }
+.label.store .status { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 999px; background: #2F6E5A; color: #fff; }
+#store { background: #20352F; }
+.store-scene { background: linear-gradient(180deg, #E4F1E8, #C6E0CF 70%, #9CC5AE); min-height: 150px; }
+.store-awning { background: repeating-linear-gradient(90deg, #2F6E5A 0 34px, #fff 34px 68px); }
+.store-scene .owner-face { width: 200px; height: 200px; margin-bottom: -34px; }
+.store-counter { position: relative; z-index: 3; height: 22px; background: linear-gradient(180deg, #A8673D, #7E4A2A); box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.25); }
+#store .store-panel { padding-top: 14px; margin-top: -6px; display: flex; flex-direction: column; min-height: 0; max-height: 60vh; }
+.store-mine { padding: 10px 12px; border-radius: 16px; background: #F1F7F3; }
+.store-mine-title { margin: 0 0 6px; font-size: 12px; font-weight: 800; color: #2F6E5A; }
+.store-mine-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.store-mine-chips span { padding: 3px 8px; border-radius: 99px; background: #fff; font-size: 12px; font-weight: 700; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06); }
+.store-mine-fillings { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.store-mine-fillings span { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+.store-mine-fillings em { font-style: normal; }
+#store .store-tabs { margin: 10px 0 8px; }
+#store .store-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 2px 4px 4px; }
+.store-icon.filling { background: #FFF6EC; }
+.store-buy.lack { opacity: 0.45; }

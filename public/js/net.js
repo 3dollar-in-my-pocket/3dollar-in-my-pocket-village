@@ -10,6 +10,7 @@ const OPS = {
   '/api/order/cancel': 'cancel',
   '/api/order/message': 'message',
   '/api/grill': 'grill',
+  '/api/buy': 'buy',
 };
 
 class Net {

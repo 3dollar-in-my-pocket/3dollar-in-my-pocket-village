@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MAP_LIMIT, STALL_GAP } from './data.js';
-import { buildPerson, animatePerson, presetOf, randomPerson } from './people.js';
+import { buildPerson, animatePerson, presetOf, randomPerson, SHOPKEEPER } from './people.js';
+import { STORE_POS, STORE_GAP } from './economy.js';
 import { ICONS } from './art.js';
 
 function mulberry32(seed) {
@@ -67,6 +68,8 @@ export class World {
     this.stalls = new Map();
     this.npcs = [];
     this.obstacles = [];
+    this.trees = [];
+    this.store = null;
     this.paused = false;
     this.zoom = 1;
     this.focus = new THREE.Vector3(0, 0, 6);
@@ -252,7 +255,99 @@ export class World {
     g.scale.setScalar(s);
     g.position.set(x, 0, z);
     this.scene.add(g);
-    this.obstacles.push({ x, z, r: 1.1 * s });
+    const obstacle = { x, z, r: 1.1 * s };
+    this.obstacles.push(obstacle);
+    this.trees.push({ g, obstacle });
+  }
+
+  /* ---------- 붕어상회 (장비·재료 상점) ---------- */
+
+  enableStore() {
+    if (this.store) return;
+    const { x, z } = STORE_POS;
+    for (const t of [...this.trees]) {
+      if (Math.hypot(t.obstacle.x - x, t.obstacle.z - z) > 4.6) continue;
+      this.scene.remove(t.g);
+      this.obstacles.splice(this.obstacles.indexOf(t.obstacle), 1);
+      this.trees.splice(this.trees.indexOf(t), 1);
+    }
+    const g = new THREE.Group();
+    const wall = lambert('#F3E3C8');
+    const wood = lambert('#9A6A43');
+    const back = new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.9, 1.4), wall);
+    back.position.set(0, 1.45, -0.9);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.25, 1.9), lambert('#2F6E5A'));
+    roof.position.set(0, 3.0, -0.8);
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.95, 0.8), wood);
+    counter.position.set(0, 0.48, 0.55);
+    const counterTop = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.1, 0.95), lambert('#6E4A2E'));
+    counterTop.position.set(0, 1.0, 0.55);
+    const awning = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.08, 1.6), new THREE.MeshLambertMaterial({ map: this.stripeTexture('#2F6E5A') }));
+    awning.position.set(0, 2.6, 0.45);
+    awning.rotation.x = 0.22;
+    const valance = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 0.3), new THREE.MeshLambertMaterial({ map: this.stripeTexture('#2F6E5A'), side: THREE.DoubleSide }));
+    valance.position.set(0, 2.33, 1.22);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.75), new THREE.MeshBasicMaterial({ map: this.storeSignTexture() }));
+    sign.position.set(0, 3.45, -0.18);
+    const signBoard = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.9, 0.12), wood);
+    signBoard.position.set(0, 3.45, -0.26);
+    // 진열: 속재료 통과 주전자 느낌의 소품
+    const props = [['#55191A', -1.3], ['#F4C63F', -0.85], ['#E08A2E', 0.85], ['#4A2A1A', 1.3]];
+    for (const [color, px] of props) {
+      const tub = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.15, 0.22, 12), lambert('#F7F9FA'));
+      tub.position.set(px, 1.16, 0.6);
+      const fill = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.02, 12), lambert(color));
+      fill.position.set(px, 1.28, 0.6);
+      g.add(tub, fill);
+    }
+    const kettle = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), lambert('#F2BC22'));
+    kettle.position.set(0, 1.22, 0.65);
+    kettle.scale.y = 0.8;
+    [back, roof, counter, counterTop, awning, signBoard].forEach((m) => {
+      m.castShadow = true;
+      m.receiveShadow = true;
+    });
+    g.add(back, roof, counter, counterTop, awning, valance, signBoard, sign, kettle);
+
+    const keeper = buildPerson(SHOPKEEPER);
+    keeper.scale.setScalar(1.25);
+    keeper.position.set(-2.55, 0, 0.9);
+    keeper.rotation.y = 0.35;
+    g.add(keeper);
+
+    const hitbox = new THREE.Mesh(new THREE.BoxGeometry(4.6, 3.8, 3), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+    hitbox.position.set(0, 1.9, 0);
+    hitbox.userData.store = true;
+    g.add(hitbox);
+    g.position.set(x, 0, z);
+    this.scene.add(g);
+    this.obstacles.push({ x, z: z - 0.4, r: 2.4 });
+    const label = this.makeLabel('store');
+    label.innerHTML = '<span>붕어상회</span><span class="status">장비 · 재료</span>';
+    this.store = { group: g, keeper, hitbox, label };
+  }
+
+  storeSpot() {
+    return { x: STORE_POS.x + (Math.random() - 0.5) * 1.2, z: STORE_POS.z + 2.3 };
+  }
+
+  storeSignTexture() {
+    return canvasTexture(416, 120, (ctx, w, h, done) => {
+      ctx.fillStyle = '#FFF8EA';
+      roundRect(ctx, 0, 0, w, h, 18);
+      ctx.fill();
+      ctx.fillStyle = '#2F6E5A';
+      roundRect(ctx, 7, 7, w - 14, h - 14, 14);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 46px Pretendard, sans-serif';
+      ctx.fillText('붕어상회', w / 2, h / 2 - 10);
+      ctx.font = '600 20px Pretendard, sans-serif';
+      ctx.fillText('장비 · 속재료 팝니다', w / 2, h / 2 + 32);
+      done();
+    });
   }
 
   addLamp(x, z) {
@@ -484,17 +579,18 @@ export class World {
     return this._sign;
   }
 
-  stripeTexture() {
-    if (!this._stripe) {
-      this._stripe = canvasTexture(256, 64, (ctx, w, h) => {
+  stripeTexture(color = '#FF8181') {
+    this._stripes ||= {};
+    if (!this._stripes[color]) {
+      this._stripes[color] = canvasTexture(256, 64, (ctx, w, h) => {
         const n = 8;
         for (let i = 0; i < n; i++) {
-          ctx.fillStyle = i % 2 ? '#FFFFFF' : '#FF8181';
+          ctx.fillStyle = i % 2 ? '#FFFFFF' : color;
           ctx.fillRect((w / n) * i, 0, w / n, h);
         }
       });
     }
-    return this._stripe;
+    return this._stripes[color];
   }
 
   syncStall(p) {
@@ -535,6 +631,7 @@ export class World {
 
   checkStallSpot(x, z) {
     if (Math.abs(x) > MAP_LIMIT - 1 || Math.abs(z) > MAP_LIMIT - 1) return { ok: false, reason: '마을 밖이에요' };
+    if (this.store && Math.hypot(STORE_POS.x - x, STORE_POS.z - z) < STORE_GAP) return { ok: false, reason: '상점과 너무 가까워요' };
     if (this.obstacles.some((o) => Math.hypot(o.x - x, o.z - z) < o.r + 1.4)) return { ok: false, reason: '집이나 나무와 겹쳐요' };
     for (const [ownerId, s] of this.stalls) {
       if (ownerId === this.meId) continue;
@@ -660,9 +757,12 @@ export class World {
       const rect = this.canvas.getBoundingClientRect();
       ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(ndc, this.camera);
-      const hits = raycaster.intersectObjects([...this.stalls.values()].map((s) => s.hitbox), false);
+      const targets = [...this.stalls.values()].map((s) => s.hitbox);
+      if (this.store) targets.push(this.store.hitbox);
+      const hits = raycaster.intersectObjects(targets, false);
       if (hits.length && !this.placing) {
-        this.handlers.onStallTap?.(hits[0].object.userData.ownerId);
+        if (hits[0].object.userData.store) this.handlers.onStoreTap?.();
+        else this.handlers.onStallTap?.(hits[0].object.userData.ownerId);
         return;
       }
       const point = new THREE.Vector3();
@@ -748,6 +848,8 @@ export class World {
       }
     }
 
+    if (this.store) animatePerson(this.store.keeper, dt, false, t);
+
     for (const n of this.npcs) {
       const moving = this.stepWalker(n, dt, 2, t);
       if (!moving) {
@@ -812,5 +914,6 @@ export class World {
     };
     for (const a of this.avatars.values()) place(a.label, a.pos.x, PERSON_H * a.scale + 0.3, a.pos.z, a.visible);
     for (const s of this.stalls.values()) place(s.label, s.group.position.x, 3.55, s.group.position.z, true);
+    if (this.store) place(this.store.label, STORE_POS.x, 4.2, STORE_POS.z, true);
   }
 }
