@@ -88,12 +88,16 @@ export class Visit {
       if (!this.active) return;
       if (p.id === this.ownerId) this.renderHeader();
       if (p.id === net.me?.id) document.getElementById('visit-capital').textContent = won(p.capital);
-      const key = `${net.players.get(this.ownerId)?.stall?.open}`;
-      if (key !== this.openKey) this.render();
+      if (this.stateKey() !== this.openKey) this.render();
     });
     net.on('grill', (g) => {
       if (this.active && g.sellerId === this.ownerId) this.renderGrill(g);
     });
+  }
+
+  stateKey() {
+    const s = net.players.get(this.ownerId);
+    return `${!!s?.stall?.open}|${s?.away ? JSON.stringify(s.away.stock) : ''}`;
   }
 
   open(ownerId) {
@@ -116,8 +120,8 @@ export class Visit {
     this.el.classList.remove('hidden');
     this.renderHeader();
     this.render();
-    this.renderGrill(net.grills.get(ownerId));
-    if (!this.bot) {
+    this.renderGrill(this.awayGrill() || net.grills.get(ownerId));
+    if (!this.bot && !seller?.away) {
       net.request('watch', { sellerId: ownerId }).then((r) => {
         if (this.active && this.ownerId === ownerId && r?.grill) this.renderGrill(r.grill);
       }).catch(() => {});
@@ -236,6 +240,14 @@ export class Visit {
     document.getElementById('visit-capital').textContent = won(net.me?.capital);
   }
 
+  // 자리 비움 가게: 불은 꺼져 있고 보관대엔 남은 재고만
+  awayGrill() {
+    const seller = net.players.get(this.ownerId);
+    if (!seller?.away || seller.stall?.open) return null;
+    const n = net.features?.shop ? 6 + (normalizeUpgrades(seller.upgrades).molds || 0) : MOLD_COUNT;
+    return { molds: Array.from({ length: n }, () => ({ p: 'empty' })), tray: seller.away.stock || {} };
+  }
+
   sellerMenu() {
     const seller = net.players.get(this.ownerId);
     return net.features?.shop && !seller?.bot ? normalizeUpgrades(seller?.upgrades).fillings : BASE_FILLINGS;
@@ -275,14 +287,23 @@ export class Visit {
     const seller = net.players.get(this.ownerId);
     if (!seller?.stall) return this.close();
     const open = !!seller.stall.open;
-    this.openKey = `${open}`;
+    this.openKey = this.stateKey();
     const waiting = this.myWaitingOrder();
     const done = this.lastOrder?.status === 'done' ? this.lastOrder : null;
-    this.shutter.classList.toggle('hidden', open || !!waiting);
-    this.el.classList.toggle('closed', !open && !waiting);
+    const away = !open && !waiting && seller.away ? seller.away : null;
+    const awaySale = away && countItems(away.stock) > 0;
+    this.shutter.classList.toggle('hidden', open || !!waiting || awaySale);
+    this.shutter.querySelector('span').textContent = away ? '자리 비움' : '준비 중';
+    this.el.classList.toggle('closed', !open && !waiting && !awaySale);
+    this.el.classList.toggle('away', !!away);
+    this.face.classList.toggle('away', !!away);
 
     if (waiting) return this.renderWaiting(waiting);
     if (done) return this.renderDone(done);
+    if (away) {
+      this.renderGrill(this.awayGrill());
+      return awaySale ? this.renderAwaySale(seller) : this.renderAwayEmpty(seller);
+    }
     if (!open) return this.renderClosed(seller);
     return this.renderMenu();
   }
@@ -299,6 +320,75 @@ export class Visit {
         <button class="btn ghost big" data-act="leave">나가기</button>
       </div>`;
     this.panel.querySelector('[data-act=leave]').addEventListener('click', () => this.close());
+  }
+
+  renderAwayEmpty(seller) {
+    this.panel.dataset.order = '';
+    this.panel.classList.remove('compact-menu');
+    this.bubble.classList.add('hidden');
+    this.sayMe(net.features?.thumbs ? '다 팔렸네! 따봉이라도 남기고 가야지' : '다 팔렸네…');
+    this.panel.innerHTML = `
+      <div class="panel-center">
+        <h3>💤 사장님이 자리를 비웠어요</h3>
+        <p>무인 판매대의 붕어빵이 모두 팔렸어요.${net.features?.thumbs ? '<br>따봉을 남기면 사장님이 돌아와서 볼 수 있어요' : ''}</p>
+        <button class="btn ghost big" data-act="leave">나가기</button>
+      </div>`;
+    this.panel.querySelector('[data-act=leave]').addEventListener('click', () => this.close());
+  }
+
+  renderAwaySale(seller) {
+    this.panel.dataset.order = '';
+    this.bubble.classList.remove('hidden');
+    this.say('📝 잠깐 자리 비웠어요! 남은 붕어빵 가져가세요');
+    const stock = seller.away.stock;
+    const menu = Object.keys(FILLINGS).filter((k) => stock[k] > 0);
+    for (const k of Object.keys(this.cart)) {
+      if (!menu.includes(k)) delete this.cart[k];
+      else this.cart[k] = Math.min(this.cart[k], stock[k]);
+    }
+    const count = countItems(this.cart);
+    this.sayMe(count ? `${orderText(this.cart)} 가져갈게요!` : '사장님이 없네? 무인 판매다!');
+    const price = priceOfItems(this.cart);
+    const lack = price > (net.me?.capital || 0);
+    const row = (key) => `
+      <div class="menu-row">
+        <img src="${FISH_IMG}" alt="">
+        <div class="info"><strong>${fillingIcon(key, 20)}${FILLINGS[key].name}</strong><span>1마리 ${won(FILLINGS[key].price)} · 남은 ${stock[key]}마리</span></div>
+        <div class="stepper">
+          <button data-step="${key}:-1" aria-label="${FILLINGS[key].short} 빼기">−</button>
+          <b>${this.cart[key] || 0}</b>
+          <button data-step="${key}:1" aria-label="${FILLINGS[key].short} 더하기" ${(this.cart[key] || 0) >= stock[key] ? 'disabled' : ''}>+</button>
+        </div>
+      </div>`;
+    this.panel.classList.toggle('compact-menu', menu.length > 2);
+    this.panel.innerHTML = `
+      <p class="menu-deal away-deal">🧺 무인 판매 · 돈은 바로 사장님께 가요 · 3마리마다 ${won(BUNDLE_DISCOUNT)} 할인</p>
+      <div class="menu-rows">${menu.map(row).join('')}</div>
+      <button class="btn primary big" id="away-submit" ${count === 0 || lack ? 'disabled' : ''}>
+        ${lack ? '자본이 부족해요' : count === 0 ? '가져갈 붕어빵을 골라 주세요' : `${count}마리 · ${won(price)} 내고 가져가기`}
+      </button>
+      <p class="panel-note">내 자본 ${won(net.me?.capital)}${Math.floor(count / 3) ? ` · ${won(Math.floor(count / 3) * BUNDLE_DISCOUNT)} 할인 적용!` : ''}</p>`;
+    this.panel.querySelectorAll('[data-step]').forEach((btn) => btn.addEventListener('click', () => {
+      const [key, delta] = btn.dataset.step.split(':');
+      this.cart[key] = Math.max(0, Math.min(stock[key] || 0, 9, (this.cart[key] || 0) + Number(delta)));
+      this.renderAwaySale(seller);
+    }));
+    document.getElementById('away-submit').addEventListener('click', () => this.submitAway());
+  }
+
+  async submitAway() {
+    const items = { ...this.cart };
+    document.getElementById('away-submit').disabled = true;
+    try {
+      const { price } = await net.post('/api/away/buy', { sellerId: this.ownerId, items });
+      this.cart = {};
+      this.lastOrder = { status: 'done', items, price, away: true };
+      this.toast(`붕어빵 ${countItems(items)}마리를 ${won(price)}에 샀어요!`, 'good');
+      this.render();
+    } catch (e) {
+      this.toast(e.message);
+      this.render();
+    }
   }
 
   renderMenu() {
@@ -413,7 +503,7 @@ export class Visit {
     this.panel.dataset.order = '';
     this.sayMe('와 따끈하다! 잘 먹을게요 😋');
     this.bubble.classList.remove('hidden');
-    this.say('맛있게 드세요~ 또 오세요!');
+    this.say(order.away ? '📝 감사합니다! 맛있게 드세요' : '맛있게 드세요~ 또 오세요!');
     this.panel.innerHTML = `
       <div class="panel-center">
         <div class="received">${Array.from({ length: Math.min(countItems(itemsOf(order)), 6) }, (_, i) => `<img src="${FISH_IMG}" alt="" style="animation-delay:${i * 0.08}s">`).join('')}</div>
@@ -421,7 +511,7 @@ export class Visit {
         <p>${itemsLabel(itemsOf(order))} · 지금까지 먹은 붕어빵 ${net.me?.bought || 0}마리</p>
         <div class="row-btns">
           <button class="btn ghost" data-act="leave">나가기</button>
-          <button class="btn primary" data-act="again">한 번 더 주문</button>
+          <button class="btn primary" data-act="again">${order.away ? '더 가져가기' : '한 번 더 주문'}</button>
         </div>
       </div>`;
     this.panel.querySelector('[data-act=leave]').addEventListener('click', () => this.close());

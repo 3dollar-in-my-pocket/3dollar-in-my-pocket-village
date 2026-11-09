@@ -252,7 +252,7 @@ net.on('snapshot', (data) => {
 });
 
 net.on('player', (p) => {
-  if (!p.online && !p.bot && p.id !== net.uid) world.removePlayer(p.id);
+  if (!p.online && !p.bot && !p.away && p.id !== net.uid) world.removePlayer(p.id);
   else world.syncPlayer(p);
   if (p.id === net.uid) {
     renderHud();
@@ -260,6 +260,23 @@ net.on('player', (p) => {
 });
 
 net.on('move', (m) => world.moveAvatar(m.id, m.x, m.z));
+
+// 자리 비운 사이 정산 (무인 판매·따봉)
+net.on('awayReport', (r) => {
+  if (!r.sold && !r.thumbs) return;
+  const el = document.createElement('div');
+  el.className = 'away-report';
+  el.innerHTML = `
+    <div class="away-card">
+      <p class="away-emoji">${r.sold ? '💰' : '👍'}</p>
+      <h3>자리 비운 사이에…</h3>
+      ${r.sold ? `<p class="away-big">붕어빵 <b>${r.sold}마리</b> 팔아서<br><b>${won(r.earned)}</b> 벌었어요</p>` : '<p class="away-big">무인 판매대는 조용했어요</p>'}
+      ${r.thumbs ? `<p class="away-thumbs">손님들이 따봉 <b>${r.thumbs}개</b>를 남기고 갔어요</p>` : ''}
+      <button class="btn primary big">좋아요!</button>
+    </div>`;
+  el.querySelector('button').addEventListener('click', () => el.remove());
+  document.body.appendChild(el);
+});
 
 net.on('order', (o) => {
   if (o.buyerId !== net.me?.id) return;

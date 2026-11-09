@@ -614,13 +614,14 @@ export class World {
     s.group.position.set(p.stall.x, 0, p.stall.z);
     s.open = !!p.stall.open;
     s.lantern.material.color.set(s.open ? '#FFB050' : '#A08A70');
-    s.label.className = `label stall${s.open ? ' open' : ''}${p.id === this.meId ? ' mine' : ''}`;
+    const away = !s.open && p.away ? (Object.values(p.away.stock || {}).some((n) => n > 0) ? 'sale' : 'empty') : null;
+    s.label.className = `label stall${s.open ? ' open' : ''}${away ? ` away ${away}` : ''}${p.id === this.meId ? ' mine' : ''}`;
     s.label.innerHTML = '';
     const name = document.createElement('span');
     name.textContent = p.stall.name || `${p.nickname}네 붕어빵`;
     const status = document.createElement('span');
     status.className = 'status';
-    status.textContent = s.open ? '영업중' : '준비중';
+    status.textContent = s.open ? '영업중' : away === 'sale' ? '무인 판매' : away ? '자리 비움' : '준비중';
     s.label.append(name, status);
   }
 
