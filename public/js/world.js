@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MAP_LIMIT, STALL_GAP } from './data.js';
-import { buildPerson, animatePerson, presetOf, randomPerson, SHOPKEEPER } from './people.js';
+import { buildPerson, animatePerson, presetOf, randomPerson, SHOPKEEPER, PARTTIMER_LOOK } from './people.js';
 import { STORE_POS, STORE_GAP } from './economy.js';
 import { ICONS } from './art.js';
 
@@ -614,14 +614,24 @@ export class World {
     s.group.position.set(p.stall.x, 0, p.stall.z);
     s.open = !!p.stall.open;
     s.lantern.material.color.set(s.open ? '#FFB050' : '#A08A70');
+    // 알바생: 사장님 자리(가게 오른쪽)에 서서 굽는 중
+    const alba = !!(s.open && p.parttimer?.working);
+    if (alba && !s.alba) {
+      s.alba = buildPerson(PARTTIMER_LOOK);
+      s.alba.scale.setScalar(1.3);
+      s.alba.position.set(1.8, 0, 0.2);
+      s.alba.rotation.y = -0.5;
+      s.group.add(s.alba);
+    }
+    if (s.alba) s.alba.visible = alba;
     const away = !s.open && p.away ? (Object.values(p.away.stock || {}).some((n) => n > 0) ? 'sale' : 'empty') : null;
-    s.label.className = `label stall${s.open ? ' open' : ''}${away ? ` away ${away}` : ''}${p.id === this.meId ? ' mine' : ''}`;
+    s.label.className = `label stall${s.open ? ' open' : ''}${alba ? ' alba' : ''}${away ? ` away ${away}` : ''}${p.id === this.meId ? ' mine' : ''}`;
     s.label.innerHTML = '';
     const name = document.createElement('span');
     name.textContent = p.stall.name || `${p.nickname}네 붕어빵`;
     const status = document.createElement('span');
     status.className = 'status';
-    status.textContent = s.open ? '영업중' : away === 'sale' ? '무인 판매' : away ? '자리 비움' : '준비중';
+    status.textContent = alba ? '알바 영업중' : s.open ? '영업중' : away === 'sale' ? '무인 판매' : away ? '자리 비움' : '준비중';
     s.label.append(name, status);
   }
 
@@ -850,6 +860,7 @@ export class World {
     }
 
     if (this.store) animatePerson(this.store.keeper, dt, false, t);
+    for (const s of this.stalls.values()) if (s.alba?.visible) animatePerson(s.alba, dt, false, t);
 
     for (const n of this.npcs) {
       const moving = this.stepWalker(n, dt, 2, t);

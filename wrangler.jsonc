@@ -31,7 +31,8 @@
     "DEV_AUTH": "1",
     "FEATURE_THUMBS": "1",
     "FEATURE_SHOP": "1",
-    "FEATURE_AWAY": "1"
+    "FEATURE_AWAY": "1",
+    "FEATURE_PARTTIMER": "1"
   },
   "env": {
     "dev": {
@@ -44,7 +45,8 @@
         "DEV_AUTH": "0",
         "FEATURE_THUMBS": "1",
         "FEATURE_SHOP": "1",
-        "FEATURE_AWAY": "1"
+        "FEATURE_AWAY": "1",
+        "FEATURE_PARTTIMER": "1"
       },
       "durable_objects": {
         "bindings": [{ "name": "VILLAGE", "class_name": "Village" }]
@@ -68,7 +70,8 @@
         "DEV_AUTH": "0",
         "FEATURE_THUMBS": "1",
         "FEATURE_SHOP": "1",
-        "FEATURE_AWAY": "0"
+        "FEATURE_AWAY": "0",
+        "FEATURE_PARTTIMER": "0"
       },
       "durable_objects": {
         "bindings": [{ "name": "VILLAGE", "class_name": "Village" }]

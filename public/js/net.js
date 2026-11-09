@@ -139,7 +139,7 @@ class Net {
         return;
       case 'player': {
         const p = msg.player;
-        if (p.online || p.bot || p.away || p.id === this.uid) this.players.set(p.id, p);
+        if (p.online || p.bot || p.away || p.parttimer?.working || p.id === this.uid) this.players.set(p.id, p);
         else this.players.delete(p.id);
         if (p.id === this.uid) this.me = p;
         this.emit('player', p);

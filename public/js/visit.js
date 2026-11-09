@@ -1,7 +1,7 @@
 import { net } from './net.js';
 import { won, escapeHtml } from './data.js';
 import { FILLINGS, BASE_FILLINGS, BUNDLE_DISCOUNT, normalizeUpgrades, itemsOf, countItems, priceOfItems, itemsLabel } from './economy.js';
-import { presetPortrait } from './people.js';
+import { presetPortrait, portrait, PARTTIMER_LOOK } from './people.js';
 import { orderText, QUICK_MESSAGES, fillingIcon } from './art.js';
 import { GrillView, TrayView, FISH_IMG, MOLD_COUNT } from './stall-ui.js';
 
@@ -23,17 +23,18 @@ const CYCLE = [
 const CYCLE_TOTAL = CYCLE.reduce((s, [, t]) => s + t, 0);
 
 class BotGrill {
-  constructor() {
-    this.offsets = Array.from({ length: MOLD_COUNT }, (_, i) => i * 1.9 + Math.random());
-    this.fillings = Array.from({ length: MOLD_COUNT }, () => (Math.random() < 0.55 ? 'red' : 'cream'));
+  constructor(menu = BASE_FILLINGS, molds = MOLD_COUNT) {
+    this.menu = menu;
+    this.offsets = Array.from({ length: molds }, (_, i) => i * 1.9 + Math.random());
+    this.fillings = Array.from({ length: molds }, () => menu[Math.floor(Math.random() * menu.length)]);
     this.time = 0;
-    this.tray = { red: 3 + Math.floor(Math.random() * 4), cream: 2 + Math.floor(Math.random() * 4) };
+    this.tray = Object.fromEntries(menu.map((k) => [k, 2 + Math.floor(Math.random() * 4)]));
   }
 
   tick(dt) {
     this.time += dt;
     if (Math.random() < dt * 0.25) {
-      const k = Math.random() < 0.5 ? 'red' : 'cream';
+      const k = this.menu[Math.floor(Math.random() * this.menu.length)];
       this.tray[k] = Math.max(1, Math.min(10, this.tray[k] + (Math.random() < 0.5 ? -1 : 1)));
     }
     return {
@@ -97,7 +98,7 @@ export class Visit {
 
   stateKey() {
     const s = net.players.get(this.ownerId);
-    return `${!!s?.stall?.open}|${s?.away ? JSON.stringify(s.away.stock) : ''}`;
+    return `${!!s?.stall?.open}|${!!s?.parttimer?.working}|${s?.away ? JSON.stringify(s.away.stock) : ''}`;
   }
 
   open(ownerId) {
@@ -107,8 +108,8 @@ export class Visit {
     this.lastOrder = null;
     this.mode = null;
     const seller = net.players.get(ownerId);
-    this.bot = seller?.bot ? new BotGrill() : null;
-    this.face.src = presetPortrait(seller?.character, { size: 360, pose: 'front' });
+    this.albaMode = null;
+    this.setupOwner(seller);
     this.meBackSrc = presetPortrait(net.me?.character, { size: 280, pose: 'back' });
     this.meThumbsSrc = net.features?.thumbs ? presetPortrait(net.me?.character, { size: 280, pose: 'back-thumbs' }) : null;
     this.meBack.src = this.meBackSrc;
@@ -133,6 +134,17 @@ export class Visit {
       if (this.bot) this.renderGrill(this.bot.tick((now - last) / 1000));
       last = now;
     }, 100);
+  }
+
+  // 사장님이 직접 / NPC 가게 / 알바생이 대신 굽는 가게
+  setupOwner(seller) {
+    const alba = !!seller?.parttimer?.working && !!seller?.stall?.open;
+    if (this.albaMode === alba) return;
+    this.albaMode = alba;
+    if (seller?.bot) this.bot = new BotGrill();
+    else if (alba) this.bot = new BotGrill(this.sellerMenu(), net.features?.shop ? 6 + (normalizeUpgrades(seller.upgrades).molds || 0) : MOLD_COUNT);
+    else this.bot = null;
+    this.face.src = alba ? portrait(PARTTIMER_LOOK, { size: 360, pose: 'front' }) : presetPortrait(seller?.character, { size: 360, pose: 'front' });
   }
 
   close() {
@@ -236,7 +248,9 @@ export class Visit {
     const seller = net.players.get(this.ownerId);
     if (!seller) return;
     document.getElementById('visit-name').textContent = seller.stall?.name || `${seller.nickname}네 붕어빵`;
-    document.getElementById('visit-sub').textContent = `${seller.nickname} 사장님${seller.bot ? ' (NPC)' : ''} · ${seller.sold}마리 판매`;
+    document.getElementById('visit-sub').textContent = seller.parttimer?.working && seller.stall?.open
+      ? `알바생이 대신 굽는 중 · ${seller.sold}마리 판매`
+      : `${seller.nickname} 사장님${seller.bot ? ' (NPC)' : ''} · ${seller.sold}마리 판매`;
     document.getElementById('visit-capital').textContent = won(net.me?.capital);
   }
 
@@ -288,6 +302,7 @@ export class Visit {
     if (!seller?.stall) return this.close();
     const open = !!seller.stall.open;
     this.openKey = this.stateKey();
+    this.setupOwner(seller);
     const waiting = this.myWaitingOrder();
     const done = this.lastOrder?.status === 'done' ? this.lastOrder : null;
     const away = !open && !waiting && seller.away ? seller.away : null;
@@ -394,7 +409,7 @@ export class Visit {
   renderMenu() {
     this.panel.dataset.order = '';
     this.bubble.classList.remove('hidden');
-    this.say('어서 오세요! 따끈한 붕어빵 있어요');
+    this.say(this.albaMode ? '어서 오세요! 사장님 대신 제가 구워드려요' : '어서 오세요! 따끈한 붕어빵 있어요');
     const menu = this.sellerMenu();
     for (const k of Object.keys(this.cart)) if (!menu.includes(k)) delete this.cart[k];
     const count = countItems(this.cart);
@@ -458,7 +473,7 @@ export class Visit {
     this.panel.innerHTML = `
       <div class="wait-head">
         <img src="${FISH_IMG}" alt="" class="wait-fish">
-        <div><strong>사장님이 굽고 있어요…</strong><span>${itemsLabel(itemsOf(order))} · ${won(order.price)} 결제 완료</span></div>
+        <div><strong>${this.albaMode ? '알바생이' : '사장님이'} 굽고 있어요…</strong><span>${itemsLabel(itemsOf(order))} · ${won(order.price)} 결제 완료</span></div>
       </div>
       <p class="say-label">말 걸기</p>
       <div class="quick-chips">${QUICK_MESSAGES.map((t) => `<button data-quick="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('')}<button data-act="type" class="type-chip">✏️ 직접 쓰기</button></div>

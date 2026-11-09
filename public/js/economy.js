@@ -84,3 +84,16 @@ export function priceOfItems(items) {
 export function itemsLabel(items) {
   return FILLING_KEYS.filter((k) => items?.[k] > 0).map((k) => `${FILLINGS[k].short} ${items[k]}`).join(' · ');
 }
+
+// 알바생: 시간권을 사면 그 시간 동안 사장님이 없을 때 대신 굽고 팔아요.
+// 직접 장사보다 확실히 느리게 (분당 약 0.5마리 · 간판 효과는 절반만)
+export const PARTTIMER = {
+  name: '알바생 붕돌이',
+  passes: [
+    { id: 'h1', hours: 1, price: 5000 },
+    { id: 'h3', hours: 3, price: 13000 },
+  ],
+  dailyMaxHours: 4, // 하루(KST)에 살 수 있는 근무 시간
+  fishPerMin: 0.5,
+};
+export const parttimerRate = (u) => PARTTIMER.fishPerMin * (1 + (signBoost(u) - 1) / 2); // 분당 마리
