@@ -207,7 +207,7 @@ export class Visit {
   spawnThumb() {
     const host = this.thumbsFx.getBoundingClientRect();
     const from = this.meBack.getBoundingClientRect();
-    const to = this.face.getBoundingClientRect();
+    const to = (this.face.classList.contains('away') ? this.bubble : this.face).getBoundingClientRect();
     const x0 = from.left + from.width * 0.72 - host.left;
     const y0 = from.top + from.height * 0.12 - host.top;
     const x1 = to.left + to.width * (0.3 + Math.random() * 0.4) - host.left;

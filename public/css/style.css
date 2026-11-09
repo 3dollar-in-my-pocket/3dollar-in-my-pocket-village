@@ -649,7 +649,8 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 /* ---------- 자리 비움 가게 · 무인 판매 ---------- */
 .label.stall.away.sale .status { background: #F2B544; color: #4A3200; }
 .label.stall.away.empty .status { background: #D9D2EA; color: #4B4366; }
-.owner-face.away { visibility: hidden; }
+.owner-face.away { display: none; }
+#visit.away .owner-bubble { margin-bottom: 90px; font-size: 15px; padding: 12px 16px; }
 #visit.away .owner-bubble { background: #FFF6C9; color: #5A4A10; border-radius: 4px; transform: rotate(-2deg); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18); }
 #visit.away .owner-bubble::after { display: none; }
 .visit-panel .menu-deal.away-deal { color: #A06A00; text-align: left; }
