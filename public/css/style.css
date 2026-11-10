@@ -645,3 +645,22 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 #store .store-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 2px 4px 4px; }
 .store-icon.filling { background: #FFF6EC; }
 .store-buy.lack { opacity: 0.45; }
+
+/* ---------- 자리 비움 가게 · 무인 판매 ---------- */
+.label.stall.away.sale .status { background: #F2B544; color: #4A3200; }
+.label.stall.away.empty .status { background: #D9D2EA; color: #4B4366; }
+.owner-face.away { display: none; }
+#visit.away .owner-bubble { margin-bottom: 90px; font-size: 15px; padding: 12px 16px; }
+#visit.away .owner-bubble { background: #FFF6C9; color: #5A4A10; border-radius: 4px; transform: rotate(-2deg); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18); }
+#visit.away .owner-bubble::after { display: none; }
+.visit-panel .menu-deal.away-deal { color: #A06A00; text-align: left; }
+.stepper button:disabled { opacity: 0.35; }
+.away-report { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(30, 20, 15, 0.45); padding: 16px; animation: fadeIn 0.2s ease-out; }
+.away-card { width: min(340px, 100%); background: #fff; border-radius: 20px; padding: 22px 20px 18px; text-align: center; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25); }
+.away-card h3 { margin: 4px 0 10px; font-size: 18px; }
+.away-emoji { font-size: 44px; margin: 0; }
+.away-big { margin: 0 0 8px; font-size: 16px; line-height: 1.5; }
+.away-big b { color: var(--pink); }
+.away-thumbs { margin: 0 0 14px; font-size: 14px; color: var(--ink-soft); }
+.away-card .btn { width: 100%; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
