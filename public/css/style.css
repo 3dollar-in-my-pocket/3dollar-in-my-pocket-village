@@ -664,3 +664,12 @@ input { font: inherit; -webkit-user-select: text; user-select: text; }
 .away-thumbs { margin: 0 0 14px; font-size: 14px; color: var(--ink-soft); }
 .away-card .btn { width: 100%; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- 알바생 ---------- */
+.label.stall.alba .status { background: #FF8181; color: #fff; }
+.store-alba-status { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 8px; border-radius: 14px; background: #F4EFE9; }
+.store-alba-status.on { background: #FFE9E6; }
+.store-alba-status img { width: 52px; height: 52px; border-radius: 50%; background: #fff; object-fit: cover; }
+.store-alba-status strong { display: block; font-size: 14px; }
+.store-alba-status span { font-size: 12px; color: var(--ink-soft); }
+.store-alba-status b { color: var(--pink); }

@@ -1,8 +1,8 @@
 import { net } from './net.js';
 import { won } from './data.js';
-import { portrait, SHOPKEEPER } from './people.js';
+import { portrait, SHOPKEEPER, PARTTIMER_LOOK } from './people.js';
 import { fillingIcon } from './art.js';
-import { FILLINGS, FILLING_KEYS, BASE_FILLINGS, EQUIPMENT, EQUIPMENT_KEYS, equipCost, equipEffect, normalizeUpgrades, moldCount, trayCap } from './economy.js';
+import { FILLINGS, FILLING_KEYS, BASE_FILLINGS, EQUIPMENT, EQUIPMENT_KEYS, equipCost, equipEffect, normalizeUpgrades, moldCount, trayCap, PARTTIMER, parttimerRate } from './economy.js';
 
 const GREETINGS = ['어서 와요! 오늘은 뭐 보러 왔어요?', '장사는 잘 돼요? 좋은 물건 많아요~', '오, 사장님! 필요한 거 있으면 말해요'];
 const THANKS = ['고마워요! 장사 대박 나요~', '좋은 선택이에요! 손님들이 좋아할 거예요', '잘 쓰세요! 또 와요~'];
@@ -14,6 +14,11 @@ function nextOnly(cur, next) {
   while (i < b.length - 1 && a[i] === b[i]) i++;
   return b.slice(i).join(' ');
 }
+
+const fmtLeft = (ms) => {
+  const m = Math.max(1, Math.ceil(ms / 60000));
+  return m >= 60 ? `${Math.floor(m / 60)}시간${m % 60 ? ` ${m % 60}분` : ''}` : `${m}분`;
+};
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
@@ -110,14 +115,43 @@ export class Store {
         </div>`;
     }).join('');
 
+    const hasAlba = !!net.features?.parttimer;
+    if (!hasAlba && this.tab === 'alba') this.tab = 'equip';
+    const pt = me.parttimer || {};
+    const left = (pt.until || 0) - Date.now();
+    const usedToday = pt.hoursToday || 0;
+    if (!this.albaFace) this.albaFace = portrait(PARTTIMER_LOOK, { size: 120, pose: 'bust' });
+    const albaRows = `
+      <div class="store-alba-status${left > 0 ? ' on' : ''}">
+        <img src="${this.albaFace}" alt="">
+        <div>
+          <strong>${PARTTIMER.name}</strong>
+          <span>${left > 0 ? `근무 시간 <b>${fmtLeft(left)}</b> 남음 · 내가 없을 때 가게를 봐요` : '고용 중인 알바가 없어요'}</span>
+        </div>
+      </div>
+      ${PARTTIMER.passes.map((x) => `
+        <div class="store-row">
+          <span class="store-icon">⏰</span>
+          <div class="store-info">
+            <strong>${x.hours}시간 근무권</strong>
+            <span class="store-effect">내가 없을 때 ${x.hours}시간 동안 굽고 팔아요</span>
+          </div>
+          ${usedToday + x.hours > PARTTIMER.dailyMaxHours ? '<span class="store-max">오늘 한도</span>' : buyBtn('parttimer', x.id, x.price)}
+        </div>`).join('')}`;
+    const notes = {
+      equip: '단계가 오를수록 가격도 올라요 · 다음 장사부터 적용돼요',
+      filling: '산 속재료는 다음 장사부터 메뉴에 올라가요',
+      alba: `오늘 ${usedToday}/${PARTTIMER.dailyMaxHours}시간 사용 · 직접 장사보다 느려요 (분당 약 ${parttimerRate(u).toFixed(1)}마리)${me.stall ? '' : ' · 가게를 먼저 차려야 해요'}`,
+    };
     this.panel.innerHTML = `
       ${mine}
       <div class="store-tabs">
         <button data-tab="equip" class="${this.tab === 'equip' ? 'on' : ''}">장비</button>
         <button data-tab="filling" class="${this.tab === 'filling' ? 'on' : ''}">속재료</button>
+        ${hasAlba ? `<button data-tab="alba" class="${this.tab === 'alba' ? 'on' : ''}">알바</button>` : ''}
       </div>
-      <div class="store-list">${this.tab === 'equip' ? equipRows : fillingRows}</div>
-      <p class="store-note">${this.tab === 'equip' ? '단계가 오를수록 가격도 올라요 · 다음 장사부터 적용돼요' : '산 속재료는 다음 장사부터 메뉴에 올라가요'}</p>`;
+      <div class="store-list">${{ equip: equipRows, filling: fillingRows, alba: albaRows }[this.tab]}</div>
+      <p class="store-note">${notes[this.tab]}</p>`;
     const list = this.panel.querySelector('.store-list');
     list.scrollTop = scroll;
     this.panel.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
@@ -139,7 +173,7 @@ export class Store {
       const { player } = await net.post('/api/buy', { kind, id });
       net.setMe(player);
       const u = normalizeUpgrades(player.upgrades);
-      const name = kind === 'equip' ? `${EQUIPMENT[id].name} Lv.${u[id]}` : FILLINGS[id].name;
+      const name = kind === 'equip' ? `${EQUIPMENT[id].name} Lv.${u[id]}` : kind === 'parttimer' ? `알바 ${PARTTIMER.passes.find((x) => x.id === id).hours}시간 근무권` : FILLINGS[id].name;
       this.toast(`${name} 구매 완료!`, 'good');
       this.say(pick(THANKS));
       this.render();

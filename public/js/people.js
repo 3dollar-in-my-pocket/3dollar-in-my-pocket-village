@@ -340,3 +340,5 @@ function raiseThumb(scene, person, front = false) {
 }
 
 export const presetPortrait = (key, opts) => portrait(presetOf(key), opts);
+
+export const PARTTIMER_LOOK = { key: 'parttimer', name: '알바생', skin: '#F6D7B8', hair: '#3B2A22', hat: 'cap', hatColor: '#FF8181', coat: '#FFF4E0', sleeves: '#FF8181', apron: '#FF8181', pants: '#4A4A58', gloves: '#FFFFFF', scarf: null };
