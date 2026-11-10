@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  FILLINGS, FILLING_KEYS, BASE_FILLINGS, EQUIPMENT, equipCost, normalizeUpgrades, priceOfItems, countItems, itemsOf, STORE_POS, STORE_GAP,
+  FILLINGS, FILLING_KEYS, BASE_FILLINGS, EQUIPMENT, equipCost, normalizeUpgrades, priceOfItems, countItems, itemsOf, STORE_POS, STORE_GAP, trayCap, PARTTIMER, parttimerRate,
 } from '../public/js/economy.js';
 
 const START_CAPITAL = 10000;
@@ -20,11 +20,16 @@ const MSG_PER_SEC = 15;
 const MAX_THUMBS_PER_REQ = 20;
 const MAX_MOLDS = 8;
 const MAX_TRAY = 40;
+const AWAY_TTL_MS = 24 * 60 * 60 * 1000; // 나간 뒤 이 시간 동안 가게가 지도에 남음
+const MAX_AWAY_STALLS = 30; // 지도가 붐비지 않게 최근에 나간 순으로 이만큼만
+const MAX_PER_AWAY_BUY = 9;
 
 const CHARACTERS = ['beanie', 'bucket', 'apron', 'curly', 'cap', 'earmuff'];
 const PHASES = new Set(['empty', 'batter', 'filled', 'side1', 'flip', 'side2', 'done', 'burnt']);
 const BOT_GREETINGS = ['주문 받았어요! 금방 구워드릴게요', '어서 오세요~ 바로 구워드릴게요!', '따끈하게 구워드릴게요!'];
 const BOT_REPLIES = ['고마워요~ 금방 드릴게요!', '네~ 바삭하게 구울게요!', '조금만 기다려 주세요 😊', '오늘 반죽이 아주 잘 됐어요!'];
+const ALBA_GREETINGS = ['사장님 대신 제가 구워드릴게요!', '어서 오세요~ 알바생이 바로 구워드려요!', '주문 받았어요! 금방 나와요'];
+const ALBA_REPLIES = ['네~ 사장님께도 전해 드릴게요!', '열심히 굽고 있어요 😊', '조금만 기다려 주세요!'];
 const BOT_SEEDS = [
   { id: 'bot-1', nickname: '붕순이', character: 'curly', x: -12, z: -6, capital: 18000, sold: 24 },
   { id: 'bot-2', nickname: '팥돌이', character: 'bucket', x: 13, z: -10, capital: 14000, sold: 15 },
@@ -48,13 +53,41 @@ const parseJson = (v) => {
 // earned 컬럼이 없던 시절 데이터: 자본 변화 + 사 먹은 붕어빵(마리당 약 800원)으로 추정
 const estimateEarned = (r) => Math.max(0, (r.capital ?? 0) - 10000 + (r.bought ?? 0) * 800);
 
+// 자리 비움 가게: { stock: { red: 3 }, sold, earned, thumbs, since }
+const normalizeAway = (a) => {
+  if (!a || typeof a !== 'object') return null;
+  const stock = {};
+  for (const k of FILLING_KEYS) {
+    const n = Math.max(0, Math.floor(Number(a.stock?.[k]) || 0));
+    if (n) stock[k] = n;
+  }
+  const num = (v) => Math.max(0, Math.floor(Number(v) || 0));
+  return { stock, sold: num(a.sold), earned: num(a.earned), thumbs: num(a.thumbs), since: num(a.since) };
+};
+
+// 알바생: { until, day, hours, working, lastTick, acc, sold, earned }
+const normalizeParttimer = (a) => {
+  const num = (v) => Math.max(0, Number(v) || 0);
+  return {
+    until: num(a?.until),
+    day: typeof a?.day === 'string' ? a.day : '',
+    hours: num(a?.hours),
+    working: !!a?.working,
+    lastTick: num(a?.lastTick),
+    acc: Math.min(1, num(a?.acc)),
+    sold: Math.floor(num(a?.sold)),
+    earned: Math.floor(num(a?.earned)),
+  };
+};
+
 class GameError extends Error {}
 
 export class Village extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.capacity = Math.max(1, Number(env.VILLAGE_CAPACITY || 50));
-    this.features = { thumbs: env.FEATURE_THUMBS === '1', shop: env.FEATURE_SHOP === '1' };
+    this.features = { thumbs: env.FEATURE_THUMBS === '1', shop: env.FEATURE_SHOP === '1', away: env.FEATURE_AWAY === '1' };
+    this.features.parttimer = this.features.away && this.features.shop && env.FEATURE_PARTTIMER === '1';
     this.players = new Map();
     this.orders = new Map();
     this.grills = new Map();
@@ -88,6 +121,9 @@ export class Village extends DurableObject {
         x: r.pos_x ?? 0,
         z: r.pos_z ?? 6,
         stall: r.stall_x == null ? null : { x: r.stall_x, z: r.stall_z, open: false, name: `${r.nickname}네 붕어빵` },
+        lastSeen: r.updated_at || 0,
+        away: r.stall_x == null ? null : normalizeAway(parseJson(r.away)),
+        parttimer: normalizeParttimer(parseJson(r.parttimer)),
       });
     }
     if (this.env.BOTS !== '0') this.seedBots();
@@ -108,6 +144,18 @@ export class Village extends DurableObject {
       if (att.role === 'player' && att.state === 'active') {
         this.online.add(att.uid);
         this.lastAction.set(att.uid, Date.now());
+      }
+    }
+    // 서버가 잠든 사이 일한 알바 몫을 정산하고, 아직 근무 시간이면 다시 가게를 연다
+    const now = Date.now();
+    for (const p of this.players.values()) {
+      if (!p.parttimer?.working) continue;
+      this.settleParttimer(p, now);
+      if (this.online.has(p.id) || !this.features.parttimer || !p.stall || now >= p.parttimer.until) {
+        p.parttimer.working = false;
+        this.dirty.add(p.id);
+      } else {
+        p.stall.open = true;
       }
     }
     if (this.dirty.size) await this.flush();
@@ -150,6 +198,12 @@ export class Village extends DurableObject {
       if (o.status !== 'waiting' && now - o.createdAt > 5 * 60 * 1000) this.orders.delete(id);
     }
     for (const p of this.players.values()) {
+      if (!p.parttimer?.working) continue;
+      const n = this.settleParttimer(p, now);
+      if (now >= p.parttimer.until) this.endShift(p);
+      else if (n) this.pushPlayer(p);
+    }
+    for (const p of this.players.values()) {
       if (!p.bot || now < p.nextSaleAt) continue;
       const count = 1 + Math.floor(Math.random() * 4);
       p.capital += priceOf(count);
@@ -183,27 +237,23 @@ export class Village extends DurableObject {
     this.dirty.clear();
     const now = Date.now();
     const stmts = [];
+    // 기능 플래그가 켜진 환경은 해당 마이그레이션이 적용돼 있어야 함 (shop: 0004, away: 0005)
+    const cols = ['user_id', 'nickname', 'avatar', 'capital', 'sold', 'bought', 'stall_x', 'stall_z', 'pos_x', 'pos_z', 'created_at', 'updated_at'];
+    if (this.features.shop) cols.push('earned', 'upgrades');
+    if (this.features.away) cols.push('away');
+    if (this.features.parttimer) cols.push('parttimer');
+    const updates = cols.filter((c) => c !== 'user_id' && c !== 'created_at').map((c) => `${c} = excluded.${c}`).join(', ');
+    const sql = `INSERT INTO players (${cols.join(', ')}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(', ')})
+       ON CONFLICT(user_id) DO UPDATE SET ${updates}`;
     for (const id of ids) {
       const p = this.players.get(id);
       if (!p || p.bot) continue;
-      if (this.features.shop) {
-        // FEATURE_SHOP 환경은 0004 마이그레이션(earned, upgrades 컬럼)이 적용돼 있어야 함
-        stmts.push(this.env.DB.prepare(
-          `INSERT INTO players (user_id, nickname, avatar, capital, sold, bought, stall_x, stall_z, pos_x, pos_z, created_at, updated_at, earned, upgrades)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)
-           ON CONFLICT(user_id) DO UPDATE SET nickname = excluded.nickname, avatar = excluded.avatar, capital = excluded.capital,
-             sold = excluded.sold, bought = excluded.bought, stall_x = excluded.stall_x, stall_z = excluded.stall_z,
-             pos_x = excluded.pos_x, pos_z = excluded.pos_z, updated_at = excluded.updated_at, earned = excluded.earned, upgrades = excluded.upgrades`,
-        ).bind(p.id, p.nickname, p.character, p.capital, p.sold, p.bought, p.stall?.x ?? null, p.stall?.z ?? null, p.x, p.z, now, p.earned, JSON.stringify(p.upgrades)));
-        continue;
-      }
-      stmts.push(this.env.DB.prepare(
-        `INSERT INTO players (user_id, nickname, avatar, capital, sold, bought, stall_x, stall_z, pos_x, pos_z, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
-         ON CONFLICT(user_id) DO UPDATE SET nickname = excluded.nickname, avatar = excluded.avatar, capital = excluded.capital,
-           sold = excluded.sold, bought = excluded.bought, stall_x = excluded.stall_x, stall_z = excluded.stall_z,
-           pos_x = excluded.pos_x, pos_z = excluded.pos_z, updated_at = excluded.updated_at`,
-      ).bind(p.id, p.nickname, p.character, p.capital, p.sold, p.bought, p.stall?.x ?? null, p.stall?.z ?? null, p.x, p.z, now));
+      if (this.online.has(p.id) || !p.lastSeen) p.lastSeen = now; // updated_at = 마지막으로 마을에 있던 시각
+      const vals = [p.id, p.nickname, p.character, p.capital, p.sold, p.bought, p.stall?.x ?? null, p.stall?.z ?? null, p.x, p.z, now, p.lastSeen];
+      if (this.features.shop) vals.push(p.earned, JSON.stringify(p.upgrades));
+      if (this.features.away) vals.push(p.away ? JSON.stringify(p.away) : null);
+      if (this.features.parttimer) vals.push(JSON.stringify(p.parttimer));
+      stmts.push(this.env.DB.prepare(sql).bind(...vals));
     }
     if (!stmts.length) return;
     try {
@@ -393,6 +443,26 @@ export class Village extends DurableObject {
       stats: this.stats(),
     });
     if (me) {
+      const pt = me.parttimer;
+      let alba = null;
+      if (pt?.working) {
+        this.settleParttimer(me);
+        this.fulfillAlbaOrders(me);
+        pt.working = false;
+        this.dirty.add(me.id);
+      }
+      if (pt && (pt.sold || pt.earned)) {
+        alba = { sold: pt.sold, earned: pt.earned };
+        pt.sold = 0;
+        pt.earned = 0;
+        this.dirty.add(me.id);
+      }
+      if (me.away || alba) {
+        const { sold = 0, earned = 0, thumbs = 0, since = 0 } = me.away || {};
+        if (this.features.away) this.send(ws, { t: 'awayReport', sold, earned, thumbs, since, alba });
+        me.away = null;
+        this.dirty.add(me.id);
+      }
       this.closeStall(me);
       this.pushPlayer(me);
     }
@@ -433,12 +503,23 @@ export class Village extends DurableObject {
         this.online.delete(a.uid);
         const p = this.players.get(a.uid);
         if (p) {
+          const leftover = this.grills.get(p.id)?.tray || p.lastTray;
           this.closeStall(p);
+          delete p.lastTray;
+          p.lastSeen = Date.now();
+          if (this.features.away && p.stall && !p.bot) p.away = this.makeAway(p, leftover);
+          if (this.features.parttimer && p.stall && p.parttimer && p.lastSeen < p.parttimer.until) {
+            // 시간권이 남아 있으면 알바생이 가게를 이어받음
+            p.parttimer.working = true;
+            p.parttimer.lastTick = p.lastSeen;
+            p.stall.open = true;
+          }
           for (const o of this.orders.values()) {
             if (o.buyerId === a.uid && o.status === 'waiting') this.cancelOrder(o, 'buyer-left');
           }
           this.dirty.add(p.id);
           this.pushPlayer(p);
+          if (p.away) this.flush().catch((e) => console.error('away flush', e)); // 재배포로 DO가 재시작돼도 무인 판매대가 남게
         }
       }
       this.admitNext();
@@ -507,11 +588,89 @@ export class Village extends DurableObject {
       stall: p.stall,
       online: !!p.bot || this.online.has(p.id),
       bot: !!p.bot,
+      away: this.isShownAway(p) ? { stock: p.away.stock, since: p.away.since } : undefined,
+      parttimer: this.features.parttimer && p.parttimer && !p.bot ? {
+        until: p.parttimer.until,
+        working: this.albaWorking(p),
+        hoursToday: p.parttimer.day === kstDay() ? p.parttimer.hours : 0,
+      } : undefined,
     };
   }
 
+  albaWorking(p) {
+    return !!(this.features.parttimer && p.parttimer?.working && p.stall && !this.online.has(p.id) && Date.now() < p.parttimer.until);
+  }
+
+  // 지난 정산 이후 흐른 시간만큼 알바가 지나가는 손님에게 판 몫
+  settleParttimer(p, now = Date.now()) {
+    const pt = p.parttimer;
+    if (!pt?.working) return 0;
+    const end = Math.min(now, pt.until);
+    const from = pt.lastTick || end;
+    pt.lastTick = Math.max(from, end);
+    if (end <= from) return 0;
+    pt.acc += ((end - from) / 60000) * parttimerRate(p.upgrades);
+    const n = Math.floor(pt.acc);
+    if (!n) return 0;
+    pt.acc -= n;
+    const menu = this.menuOf(p);
+    let price = 0;
+    for (let i = 0; i < n; i++) price += FILLINGS[pick(menu)].price;
+    p.capital += price;
+    p.earned += price;
+    p.sold += n;
+    pt.sold += n;
+    pt.earned += price;
+    this.dirty.add(p.id);
+    return n;
+  }
+
+  fulfillAlbaOrders(p) {
+    for (const o of this.orders.values()) {
+      if (o.sellerId === p.id && o.status === 'waiting' && o.byAlba) this.fulfillOrder(o);
+    }
+  }
+
+  // 시간권이 끝남: 알바 퇴근, 가게는 다시 자리 비움(남은 재고가 있으면 무인 판매)
+  endShift(p) {
+    this.settleParttimer(p, p.parttimer.until);
+    this.fulfillAlbaOrders(p);
+    p.parttimer.working = false;
+    if (p.stall) p.stall.open = false;
+    this.dirty.add(p.id);
+    this.pushPlayer(p);
+    this.flush().catch((e) => console.error('shift flush', e));
+  }
+
   visiblePlayers() {
-    return [...this.players.values()].filter((p) => p.bot || this.online.has(p.id));
+    const away = this.awayIds();
+    return [...this.players.values()].filter((p) => p.bot || this.online.has(p.id) || away.has(p.id) || this.albaWorking(p));
+  }
+
+  // 나갔지만 지도에 남겨 둘 가게 (최근에 나간 순 MAX_AWAY_STALLS곳)
+  awayIds() {
+    if (!this.features.away) return new Set();
+    const now = Date.now();
+    return new Set([...this.players.values()]
+      .filter((p) => p.away && p.stall && !p.bot && !this.online.has(p.id) && now - (p.lastSeen || 0) < AWAY_TTL_MS)
+      .sort((x, y) => y.lastSeen - x.lastSeen)
+      .slice(0, MAX_AWAY_STALLS)
+      .map((p) => p.id));
+  }
+
+  isShownAway(p) {
+    return !!(this.features.away && p.away && !this.online.has(p.id) && this.awayIds().has(p.id));
+  }
+
+  // 나가는 순간 보관대에 남은 붕어빵 = 무인 판매 재고 (속재료별 보관대 한도까지)
+  makeAway(p, tray) {
+    const cap = Math.min(MAX_TRAY, trayCap(p.upgrades));
+    const stock = {};
+    for (const k of this.menuOf(p)) {
+      const n = toCount(tray?.[k], cap);
+      if (n) stock[k] = n;
+    }
+    return { stock, sold: 0, earned: 0, thumbs: 0, since: Date.now() };
   }
 
   ranking() {
@@ -621,6 +780,8 @@ export class Village extends DurableObject {
   }
 
   closeStall(p) {
+    const g = this.grills.get(p.id);
+    if (g?.tray) p.lastTray = g.tray;
     this.clearGrill(p.id);
     if (!p.stall || !p.stall.open || p.bot) return;
     p.stall.open = false;
@@ -658,6 +819,10 @@ export class Village extends DurableObject {
       seller.capital += o.price;
       seller.earned += o.price;
       seller.sold += countItems(itemsOf(o));
+      if (o.byAlba && seller.parttimer) {
+        seller.parttimer.sold += countItems(itemsOf(o));
+        seller.parttimer.earned += o.price;
+      }
       this.dirty.add(seller.id);
       this.pushPlayer(seller);
     }
@@ -678,7 +843,7 @@ export class Village extends DurableObject {
         const character = CHARACTERS.includes(d.character) ? d.character : CHARACTERS[0];
         let p = this.players.get(uid);
         if (!p) {
-          p = { id: uid, nickname, character, capital: START_CAPITAL, sold: 0, bought: 0, earned: 0, upgrades: normalizeUpgrades(null), x: (Math.random() - 0.5) * 6, z: 6 + Math.random() * 3, stall: null };
+          p = { id: uid, nickname, character, capital: START_CAPITAL, sold: 0, bought: 0, earned: 0, upgrades: normalizeUpgrades(null), parttimer: normalizeParttimer(null), x: (Math.random() - 0.5) * 6, z: 6 + Math.random() * 3, stall: null };
           this.players.set(uid, p);
         } else {
           p.nickname = nickname;
@@ -720,6 +885,7 @@ export class Village extends DurableObject {
         const p = this.requireMe(uid);
         if (!p.stall) throw new GameError('먼저 가게를 차려 주세요');
         p.stall.open = true;
+        delete p.lastTray;
         p.stall.name = `${p.nickname}네 붕어빵`;
         this.pushPlayer(p);
         return { player: this.publicPlayer(p) };
@@ -777,12 +943,14 @@ export class Village extends DurableObject {
           status: 'waiting',
           createdAt: Date.now(),
         };
-        if (seller.bot) order.botReadyAt = Date.now() + 9000 + Math.random() * 6000;
+        const alba = this.albaWorking(seller);
+        if (alba) order.byAlba = true;
+        if (seller.bot || alba) order.botReadyAt = Date.now() + 9000 + Math.random() * 6000;
         this.orders.set(order.id, order);
         this.dirty.add(uid);
         this.pushPlayer(p);
         this.pushOrder(order);
-        if (seller.bot) setTimeout(() => order.status === 'waiting' && this.addMessage(order, 'seller', pick(BOT_GREETINGS)), 900);
+        if (seller.bot || alba) setTimeout(() => order.status === 'waiting' && this.addMessage(order, 'seller', pick(alba ? ALBA_GREETINGS : BOT_GREETINGS)), 900);
         return { order };
       }
 
@@ -809,7 +977,7 @@ export class Village extends DurableObject {
         const from = o.buyerId === uid ? 'buyer' : 'seller';
         this.addMessage(o, from, text);
         const seller = this.players.get(o.sellerId);
-        if (from === 'buyer' && seller?.bot) setTimeout(() => o.status === 'waiting' && this.addMessage(o, 'seller', pick(BOT_REPLIES)), 1400);
+        if (from === 'buyer' && (seller?.bot || o.byAlba)) setTimeout(() => o.status === 'waiting' && this.addMessage(o, 'seller', pick(o.byAlba ? ALBA_REPLIES : BOT_REPLIES)), 1400);
         return { order: o };
       }
 
@@ -844,6 +1012,17 @@ export class Village extends DurableObject {
         if (d.kind === 'equip' && EQUIPMENT[d.id]) {
           cost = equipCost(d.id, p.upgrades[d.id]);
           if (cost == null) throw new GameError('이미 최고 단계예요');
+        } else if (d.kind === 'parttimer' && this.features.parttimer && PARTTIMER.passes.some((x) => x.id === d.id)) {
+          const pass = PARTTIMER.passes.find((x) => x.id === d.id);
+          if (!p.stall) throw new GameError('먼저 가게를 차려 주세요');
+          const pt = p.parttimer;
+          const day = kstDay();
+          if (pt.day !== day) {
+            pt.day = day;
+            pt.hours = 0;
+          }
+          if (pt.hours + pass.hours > PARTTIMER.dailyMaxHours) throw new GameError(`알바는 하루 ${PARTTIMER.dailyMaxHours}시간까지만 쓸 수 있어요`);
+          cost = pass.price;
         } else if (d.kind === 'filling' && FILLINGS[d.id] && !BASE_FILLINGS.includes(d.id)) {
           if (p.upgrades.fillings.includes(d.id)) throw new GameError('이미 가지고 있는 속재료예요');
           cost = FILLINGS[d.id].unlock;
@@ -853,7 +1032,11 @@ export class Village extends DurableObject {
         if (p.capital < cost) throw new GameError('자본이 부족해요');
         p.capital -= cost;
         if (d.kind === 'equip') p.upgrades[d.id] += 1;
-        else p.upgrades = normalizeUpgrades({ ...p.upgrades, fillings: [...p.upgrades.fillings, d.id] });
+        else if (d.kind === 'parttimer') {
+          const pass = PARTTIMER.passes.find((x) => x.id === d.id);
+          p.parttimer.until = Math.max(Date.now(), p.parttimer.until) + pass.hours * 60 * 60 * 1000;
+          p.parttimer.hours += pass.hours;
+        } else p.upgrades = normalizeUpgrades({ ...p.upgrades, fillings: [...p.upgrades.fillings, d.id] });
         this.dirty.add(uid);
         await this.flush(); // 구매는 바로 저장 (30초 묶음 저장 전에 서버가 재시작돼도 안 사라지게)
         this.pushPlayer(p);
@@ -867,8 +1050,46 @@ export class Village extends DurableObject {
         if (!seller?.stall || seller.id === uid) throw new GameError('따봉을 보낼 수 없어요');
         const count = Math.max(1, Math.min(MAX_THUMBS_PER_REQ, Math.floor(Number(d.count) || 1)));
         this.rateLimit(uid, 'thumbs', 250);
-        if (!seller.bot) this.sendTo(seller.id, { t: 'thumbs', fromId: uid, fromName: p.nickname, fromCharacter: p.character, count });
+        if (this.isShownAway(seller)) {
+          seller.away.thumbs += count;
+          this.dirty.add(seller.id);
+        } else if (!seller.bot) {
+          this.sendTo(seller.id, { t: 'thumbs', fromId: uid, fromName: p.nickname, fromCharacter: p.character, count });
+        }
         return null;
+      }
+
+      case 'awayBuy': {
+        if (!this.features.away) throw new GameError('알 수 없는 요청이에요');
+        const p = this.requireMe(uid);
+        const seller = this.players.get(d.sellerId);
+        if (!seller || seller.id === uid) throw new GameError('살 수 없는 가게예요');
+        if (!this.isShownAway(seller)) throw new GameError('무인 판매 중인 가게가 아니에요');
+        const stock = seller.away.stock;
+        const items = this.parseItems(d, Object.keys(stock));
+        const count = countItems(items);
+        if (count < 1 || count > MAX_PER_AWAY_BUY) throw new GameError('메뉴를 골라 주세요');
+        for (const [k, n] of Object.entries(items)) if (n > (stock[k] || 0)) throw new GameError('남은 붕어빵보다 많이 골랐어요');
+        this.rateLimit(uid, 'awayBuy', 800);
+        const price = priceOfItems(items);
+        if (p.capital < price) throw new GameError('자본이 부족해요');
+        p.capital -= price;
+        p.bought += count;
+        seller.capital += price;
+        seller.earned += price;
+        seller.sold += count;
+        for (const [k, n] of Object.entries(items)) {
+          stock[k] -= n;
+          if (stock[k] <= 0) delete stock[k];
+        }
+        seller.away.sold += count;
+        seller.away.earned += price;
+        this.dirty.add(uid);
+        this.dirty.add(seller.id);
+        await this.flush(); // 서로 다른 두 사람 사이 돈 이동이라 바로 저장
+        this.pushPlayer(p);
+        this.pushPlayer(seller);
+        return { price, items, player: this.publicPlayer(p) };
       }
 
       default:
