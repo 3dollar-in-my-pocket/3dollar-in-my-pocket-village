@@ -404,13 +404,28 @@ export class Village extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  recordVisit(uid) {
+  rollDay() {
     const day = kstDay();
     if (this.visitDay !== day) {
       this.visitDay = day;
       this.visitedToday = new Set();
+      this.stepsToday = new Set();
       this.peakToday = 0;
     }
+    return day;
+  }
+
+  recordStep(uid, step) {
+    const day = this.rollDay();
+    const key = `${step}:${uid}`;
+    if (this.stepsToday.has(key)) return;
+    this.stepsToday.add(key);
+    this.env.DB.prepare('INSERT OR IGNORE INTO funnel_events (day, user_id, step, first_at) VALUES (?1, ?2, ?3, ?4)')
+      .bind(day, uid, step, Date.now()).run().catch((e) => console.error('funnel log', e));
+  }
+
+  recordVisit(uid) {
+    const day = this.rollDay();
     const now = Date.now();
     if (!this.visitedToday.has(uid)) {
       this.visitedToday.add(uid);
@@ -845,6 +860,7 @@ export class Village extends DurableObject {
         if (!p) {
           p = { id: uid, nickname, character, capital: START_CAPITAL, sold: 0, bought: 0, earned: 0, upgrades: normalizeUpgrades(null), parttimer: normalizeParttimer(null), x: (Math.random() - 0.5) * 6, z: 6 + Math.random() * 3, stall: null };
           this.players.set(uid, p);
+          this.recordStep(uid, 'join');
         } else {
           p.nickname = nickname;
           p.character = character;
@@ -875,6 +891,7 @@ export class Village extends DurableObject {
           if (other.id === uid || !other.stall) continue;
           if (Math.hypot(other.stall.x - x, other.stall.z - z) < STALL_GAP) throw new GameError(`${other.nickname}님 가게와 너무 가까워요`);
         }
+        if (!p.stall) this.recordStep(uid, 'stall');
         p.stall = { x, z, open: false, name: `${p.nickname}네 붕어빵` };
         this.dirty.add(uid);
         this.pushPlayer(p);
@@ -887,6 +904,7 @@ export class Village extends DurableObject {
         p.stall.open = true;
         delete p.lastTray;
         p.stall.name = `${p.nickname}네 붕어빵`;
+        this.recordStep(uid, 'open');
         this.pushPlayer(p);
         return { player: this.publicPlayer(p) };
       }
@@ -908,6 +926,7 @@ export class Village extends DurableObject {
         p.capital += price;
         p.earned += price;
         p.sold += count;
+        this.recordStep(uid, 'sale');
         this.dirty.add(uid);
         this.pushPlayer(p);
         return { price, capital: p.capital };
@@ -947,6 +966,7 @@ export class Village extends DurableObject {
         if (alba) order.byAlba = true;
         if (seller.bot || alba) order.botReadyAt = Date.now() + 9000 + Math.random() * 6000;
         this.orders.set(order.id, order);
+        this.recordStep(uid, 'buy');
         this.dirty.add(uid);
         this.pushPlayer(p);
         this.pushOrder(order);

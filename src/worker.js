@@ -24,6 +24,14 @@ const guestAllowed = (env) => ['guest', 'hybrid'].includes(authMode(env));
 const tokenAllowed = (env) => ['hybrid', 'app'].includes(authMode(env));
 const clientIp = (request) => request.headers.get('CF-Connecting-IP') || 'local';
 const village = (env) => env.VILLAGE.get(env.VILLAGE.idFromName(VILLAGE_NAME));
+const kstDay = () => new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+function countPageView(env) {
+  return env.DB.prepare(
+    `INSERT INTO daily_counters (day, key, n) VALUES (?1, 'page_view', 1)
+     ON CONFLICT(day, key) DO UPDATE SET n = n + 1`,
+  ).bind(kstDay()).run().catch((e) => console.error('page view log', e));
+}
 
 function sameOrigin(request, url) {
   const origin = request.headers.get('Origin');
@@ -130,11 +138,12 @@ async function handleSocket(request, env, url) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     switch (url.pathname) {
       case '/':
       case '/index.html':
+        if (request.method === 'GET') ctx.waitUntil(countPageView(env));
         return handleIndex(request, env, url);
       case '/ws':
         return handleSocket(request, env, url);

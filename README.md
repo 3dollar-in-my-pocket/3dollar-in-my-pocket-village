@@ -127,6 +127,22 @@ SELECT * FROM daily_visitors;
 
 대기열에만 있다가 입장하지 못한 사람은 세지 않습니다. 기록은 2026-11-06 배포부터 쌓입니다.
 
+### 첫 방문 퍼널
+
+```sql
+SELECT * FROM daily_funnel;
+```
+
+| 컬럼 | 뜻 |
+|---|---|
+| `page_views` | 게임 페이지(`/`)를 연 횟수 (사람 수 아님, 새로고침도 셈) |
+| `visitors` / `new_visitors` | 마을 입장 인원 / 그중 처음 온 사람 |
+| `new_joined` | 처음 온 사람 중 캐릭터가 생긴 사람 (지금은 입장하면 바로 생성) |
+| `new_stall` / `new_open` | 가게를 차린 사람 / 장사를 시작한 사람 |
+| `new_sale` / `new_buy` | 손님에게 붕어빵을 판 사람 / 다른 가게에 주문한 사람 |
+
+단계 기록은 `funnel_events`(날짜·플레이어·단계별 첫 시각)에 쌓이고, 같은 날 같은 단계는 한 번만 셉니다. 기록은 퍼널 배포일부터 쌓입니다.
+
 ## 방문 그래프 (Cloudflare Web Analytics)
 
 Cloudflare 대시보드 → **Analytics & logs → Web analytics → boong-village.3dollarinmypocket.workers.dev**에서 일별 방문·페이지뷰·기기·국가를 그래프로 봅니다.
