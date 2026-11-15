@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  FILLINGS, FILLING_KEYS, BASE_FILLINGS, EQUIPMENT, equipCost, normalizeUpgrades, priceOfItems, countItems, itemsOf, STORE_POS, STORE_GAP, trayCap, PARTTIMER, parttimerRate,
+  FILLINGS, FILLING_KEYS, BASE_FILLINGS, EQUIPMENT, equipCost, normalizeUpgrades, priceOfItems, countItems, itemsOf, trayCap, PARTTIMER, parttimerRate,
 } from '../public/js/economy.js';
 
 const START_CAPITAL = 10000;
@@ -886,7 +886,6 @@ export class Village extends DurableObject {
         if (p.stall?.open) throw new GameError('장사 중에는 가게를 옮길 수 없어요');
         const x = clampCoord(d.x);
         const z = clampCoord(d.z);
-        if (this.features.shop && Math.hypot(STORE_POS.x - x, STORE_POS.z - z) < STORE_GAP) throw new GameError('상점과 너무 가까워요');
         for (const other of this.visiblePlayers()) {
           if (other.id === uid || !other.stall) continue;
           if (Math.hypot(other.stall.x - x, other.stall.z - z) < STALL_GAP) throw new GameError(`${other.nickname}님 가게와 너무 가까워요`);

@@ -42,7 +42,6 @@ await loadArt();
 const world = new World($('#world'), $('#labels'), {
   onGroundTap: handleGroundTap,
   onStallTap: handleStallTap,
-  onStoreTap: handleStoreTap,
 });
 
 function backToMap() {
@@ -207,7 +206,7 @@ $('#nickname').addEventListener('keydown', (e) => {
 
 net.on('hello', (h) => {
   state.appName = h.appName;
-  if (h.features?.shop) world.enableStore();
+  $('#btn-store').classList.toggle('hidden', !h.features?.shop);
   if (h.me) {
     state.character = presetOf(h.me.character).key;
     $('#nickname').value = h.me.nickname;
@@ -374,6 +373,7 @@ $('#btn-main').addEventListener('click', () => {
 });
 $('#btn-move').addEventListener('click', () => enterPlacement());
 $('#btn-rank').addEventListener('click', () => openRankSheet());
+$('#btn-store').addEventListener('click', () => openStore());
 $('#btn-profile').addEventListener('click', () => openProfileSheet());
 
 /* ---------- Walking & placement ---------- */
@@ -482,15 +482,10 @@ async function handleStallTap(ownerId) {
 
 /* ---------- 붕어상회 (장비·속재료 상점) ---------- */
 
-async function handleStoreTap() {
+function openStore() {
   if (!net.me || state.placing || state.mode !== 'map') return;
   state.mode = 'store';
-  const spot = world.storeSpot();
-  const front = world.clampPoint(spot.x, spot.z);
-  const here = world.myPosition();
-  if (Math.hypot(here.x - front.x, here.z - front.z) > 14) world.teleportMe(front.x, front.z + 5);
-  net.post('/api/move', front).catch(() => {});
-  await Promise.race([world.walkMeTo(front.x, front.z), new Promise((r) => setTimeout(r, 2500))]);
+  closeSheet();
   $('#hud').classList.add('hidden');
   world.setPaused(true);
   store.open();
