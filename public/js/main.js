@@ -363,7 +363,7 @@ function renderHud() {
   $('#hud-name').textContent = me.nickname;
   $('#btn-profile').classList.add('me');
   const hasStall = !!me.stall;
-  $('#btn-main').textContent = hasStall ? '내 가게에서 장사하기' : '가게 차리기';
+  $('#btn-main').textContent = hasStall ? '장사하러 가기' : '가게 차리기';
   $('#btn-move').classList.toggle('hidden', !hasStall || state.placing);
 }
 
