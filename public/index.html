@@ -51,7 +51,7 @@
 
   <section id="hud" class="hidden">
     <header class="hud-top">
-      <div class="hud-brand"><img src="assets/cat/bungeoppang-tight.svg" alt=""><span>붕어빌리지</span></div>
+      <button id="btn-profile" class="hud-brand" aria-label="내 정보 바꾸기"><img id="hud-avatar" src="assets/cat/bungeoppang-tight.svg" alt=""><span id="hud-name">붕어빌리지</span></button>
       <div class="hud-live"><span class="dot"></span><span id="live-count">0명</span></div>
       <div class="hud-money"><span class="label">내 자본</span><strong id="my-capital">0원</strong></div>
     </header>
@@ -66,6 +66,10 @@
       <button id="btn-rank" class="btn round" aria-label="랭킹">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>
         <span>랭킹</span>
+      </button>
+      <button id="btn-store" class="btn round hidden" aria-label="붕어상회">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9l1.5-5h13L20 9"/><path d="M4 9h16v1.5a2.7 2.7 0 0 1-5.3 0 2.7 2.7 0 0 1-5.4 0 2.7 2.7 0 0 1-5.3 0V9z"/><path d="M5.5 13v7h13v-7"/><path d="M10 20v-4h4v4"/></svg>
+        <span>상점</span>
       </button>
       <button id="btn-main" class="btn primary main-action">가게 차리기</button>
       <button id="btn-move" class="btn round hidden" aria-label="가게 옮기기">

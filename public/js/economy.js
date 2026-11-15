@@ -3,8 +3,6 @@
 export const START_CAPITAL = 10000;
 
 // 마을 상점(붕어상회) 위치. 가게는 이 근처에 차릴 수 없음
-export const STORE_POS = { x: 8, z: 15 };
-export const STORE_GAP = 6;
 export const BUNDLE_SIZE = 3;
 export const BUNDLE_DISCOUNT = 1000; // 3마리마다 1천원 할인 (팥·슈크림 3마리 = 2천원)
 

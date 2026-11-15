@@ -42,7 +42,6 @@ await loadArt();
 const world = new World($('#world'), $('#labels'), {
   onGroundTap: handleGroundTap,
   onStallTap: handleStallTap,
-  onStoreTap: handleStoreTap,
 });
 
 function backToMap() {
@@ -89,17 +88,29 @@ function hideGate() {
 
 /* ---------- Entry (first visit only) ---------- */
 
-function renderCharacters() {
-  const wrap = $('#characters');
+const NAME_TASTES = ['바삭한', '달콤한', '따끈한', '고소한', '말랑한', '든든한', '쫀득한', '포근한'];
+const NAME_SNACKS = ['팥붕', '슈붕', '잉어빵', '붕어빵', '호떡', '국화빵', '계란빵'];
+const pickOne = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const randomName = () => `${pickOne(NAME_TASTES)}${pickOne(NAME_SNACKS)}${Math.floor(Math.random() * 90) + 10}`;
+
+function saveCharacter(key) {
+  try {
+    localStorage.setItem(PREF_KEY, key);
+  } catch {
+    /* 저장 불가 환경 */
+  }
+}
+
+function renderCharacters(wrap = $('#characters'), selected = state.character, onPick = (key) => {
+  state.character = key;
+  renderCharacters();
+}) {
   wrap.innerHTML = '';
   for (const p of PRESETS) {
     const btn = document.createElement('button');
-    btn.className = `character${p.key === state.character ? ' selected' : ''}`;
+    btn.className = `character${p.key === selected ? ' selected' : ''}`;
     btn.innerHTML = `<img src="${presetPortrait(p.key, { size: 160 })}" alt=""><span>${p.name}</span>`;
-    btn.addEventListener('click', () => {
-      state.character = p.key;
-      renderCharacters();
-    });
+    btn.addEventListener('click', () => onPick(p.key));
     wrap.appendChild(btn);
   }
 }
@@ -128,16 +139,49 @@ function enterVillage(player, greet) {
   if (greet) toast(`${player.nickname} 사장님, 어서 오세요!`, 'pink');
 }
 
+// 처음 온 사람은 폼 없이 바로 마을로: 앱 닉네임(없으면 무작위 이름)과 캐릭터를 정해서 입장, 이름·캐릭터는 HUD에서 바꾼다
+async function autoJoin() {
+  const nickname = (state.appName || '').trim().slice(0, 10) || randomName();
+  const character = savedCharacter() ? state.character : pickOne(PRESETS).key;
+  try {
+    const { player } = await net.post('/api/join', { nickname, character });
+    state.character = player.character;
+    saveCharacter(player.character);
+    enterVillage(player, false);
+    showWelcome(player);
+  } catch (e) {
+    showEntry(state.appName);
+    $('#entry-error').textContent = e.message;
+  }
+}
+
+function showWelcome(player) {
+  const el = document.createElement('div');
+  el.className = 'away-report';
+  el.innerHTML = `
+    <div class="away-card">
+      <img class="welcome-portrait" src="${presetPortrait(player.character, { size: 200 })}" alt="">
+      <h3>${escapeHtml(player.nickname)} 사장님, 어서 오세요!</h3>
+      <p class="welcome-desc">원하는 자리에 노점을 차리고 붕어빵을 구워 팔아요.<br>제일 많이 번 사장님은 누구일까요?</p>
+      <button class="btn primary big" data-act="stall">가게 차리러 가기</button>
+      <button class="btn ghost big" data-act="profile">이름·캐릭터 바꾸기</button>
+    </div>`;
+  el.addEventListener('click', (e) => {
+    const act = e.target.closest('button')?.dataset.act;
+    if (!act) return;
+    el.remove();
+    if (act === 'stall') enterPlacement();
+    else openProfileSheet();
+  });
+  document.body.appendChild(el);
+}
+
 async function join(nickname) {
   $('#entry-error').textContent = '';
   $('#start').disabled = true;
   try {
     const { player } = await net.post('/api/join', { nickname, character: state.character });
-    try {
-      localStorage.setItem(PREF_KEY, player.character);
-    } catch {
-      /* 저장 불가 환경 */
-    }
+    saveCharacter(player.character);
     enterVillage(player, true);
   } catch (e) {
     $('#entry-error').textContent = e.message;
@@ -162,7 +206,7 @@ $('#nickname').addEventListener('keydown', (e) => {
 
 net.on('hello', (h) => {
   state.appName = h.appName;
-  if (h.features?.shop) world.enableStore();
+  $('#btn-store').classList.toggle('hidden', !h.features?.shop);
   if (h.me) {
     state.character = presetOf(h.me.character).key;
     $('#nickname').value = h.me.nickname;
@@ -179,14 +223,14 @@ net.on('queue', (q) => {
 
 net.on('admitted', () => {
   if (net.me) enterVillage(net.me, !state.entered);
-  else showEntry(state.appName);
+  else autoJoin();
 });
 
 net.on('unauthorized', (u) => {
   if (u.guest) {
     showGate(
       '붕어빌리지에 어서 오세요',
-      '지금은 가슴속 3천원 로그인 없이 열려 있어요.<br>들어가서 사장님 이름을 정하면 시작해요.',
+      '지금은 가슴속 3천원 로그인 없이 열려 있어요.<br>들어가면 바로 내 붕어빵 가게를 차릴 수 있어요.',
       `<form class="dev-login guest-login" id="guest-login">
         ${u.inviteRequired ? '<input id="invite-code" maxlength="20" placeholder="입장 코드" autocomplete="off">' : ''}
         <button class="btn primary ${u.inviteRequired ? 'small' : 'big'}">입장하기</button>
@@ -315,8 +359,11 @@ function renderHud() {
   const me = net.me;
   if (!me) return;
   $('#my-capital').textContent = won(me.capital);
+  $('#hud-avatar').src = presetPortrait(me.character, { size: 96 });
+  $('#hud-name').textContent = me.nickname;
+  $('#btn-profile').classList.add('me');
   const hasStall = !!me.stall;
-  $('#btn-main').textContent = hasStall ? '내 가게에서 장사하기' : '가게 차리기';
+  $('#btn-main').textContent = hasStall ? '장사하러 가기' : '가게 차리기';
   $('#btn-move').classList.toggle('hidden', !hasStall || state.placing);
 }
 
@@ -326,6 +373,8 @@ $('#btn-main').addEventListener('click', () => {
 });
 $('#btn-move').addEventListener('click', () => enterPlacement());
 $('#btn-rank').addEventListener('click', () => openRankSheet());
+$('#btn-store').addEventListener('click', () => openStore());
+$('#btn-profile').addEventListener('click', () => openProfileSheet());
 
 /* ---------- Walking & placement ---------- */
 
@@ -433,18 +482,65 @@ async function handleStallTap(ownerId) {
 
 /* ---------- 붕어상회 (장비·속재료 상점) ---------- */
 
-async function handleStoreTap() {
+function openStore() {
   if (!net.me || state.placing || state.mode !== 'map') return;
   state.mode = 'store';
-  const spot = world.storeSpot();
-  const front = world.clampPoint(spot.x, spot.z);
-  const here = world.myPosition();
-  if (Math.hypot(here.x - front.x, here.z - front.z) > 14) world.teleportMe(front.x, front.z + 5);
-  net.post('/api/move', front).catch(() => {});
-  await Promise.race([world.walkMeTo(front.x, front.z), new Promise((r) => setTimeout(r, 2500))]);
+  closeSheet();
   $('#hud').classList.add('hidden');
   world.setPaused(true);
   store.open();
+}
+
+/* ---------- 내 정보 (이름·캐릭터) ---------- */
+
+function openProfileSheet() {
+  const me = net.me;
+  if (!me || state.mode !== 'map' || state.placing) return;
+  state.sheet = { type: 'profile', character: presetOf(me.character).key };
+  $('#sheet-body').innerHTML = `
+    <div class="profile-head"><h2>내 정보</h2><p class="sub" style="margin:4px 0 0">랭킹과 가게 간판에 보이는 이름이에요</p></div>
+    <label class="field-label" for="profile-name">사장님 이름</label>
+    <input id="profile-name" maxlength="10" autocomplete="off">
+    <p class="field-hint">10자까지</p>
+    <p class="field-label">캐릭터</p>
+    <div id="profile-characters" class="characters"></div>
+    <button id="profile-save" class="btn primary big">저장하기</button>
+    <p id="profile-error" class="error"></p>`;
+  $('#profile-name').value = me.nickname;
+  const pick = (key) => {
+    state.sheet.character = key;
+    renderCharacters($('#profile-characters'), key, pick);
+  };
+  pick(state.sheet.character);
+  $('#profile-save').addEventListener('click', saveProfile);
+  $('#profile-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveProfile();
+  });
+  $('#sheet').classList.remove('hidden');
+  $('#sheet-backdrop').classList.remove('hidden');
+}
+
+async function saveProfile() {
+  if (state.sheet?.type !== 'profile') return;
+  const nickname = $('#profile-name').value.trim();
+  if (!nickname) {
+    $('#profile-error').textContent = '사장님 이름을 입력해 주세요';
+    return;
+  }
+  $('#profile-save').disabled = true;
+  try {
+    const { player } = await net.post('/api/join', { nickname, character: state.sheet.character });
+    state.character = player.character;
+    saveCharacter(player.character);
+    net.setMe(player);
+    world.syncPlayer(player);
+    renderHud();
+    closeSheet();
+    toast('사장님 정보를 바꿨어요', 'good');
+  } catch (e) {
+    $('#profile-error').textContent = e.message;
+    $('#profile-save').disabled = false;
+  }
 }
 
 /* ---------- Ranking ---------- */
